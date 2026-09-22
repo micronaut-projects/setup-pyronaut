@@ -42,83 +42,14 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: Create the hello-world project
+        # The project lives in tests/fixtures/hello-world so it can be read,
+        # edited and linted like normal source rather than as heredocs inside
+        # a workflow. It is copied out of the checkout so the run exercises a
+        # project directory that is not the repository root.
         run: |
           set -euo pipefail
-          project="${{ runner.temp }}/hello-world"
-          mkdir -p "$project/src" "$project/tests" "$project/config"
-
-          cat > "$project/pyproject.toml" <<'TOML'
-          [project]
-          name = "hello-pyronaut"
-          version = "0.1.0"
-          dynamic = ["scripts"]
-
-          [build-system]
-          requires = ["setuptools", "wheel", "tomli"]
-          build-backend = "setuptools.build_meta"
-
-          [tool.pyronaut]
-          repositories = [
-            "mavenCentral",
-            "https://central.sonatype.com/repository/maven-snapshots/"
-          ]
-
-          [tool.pyronaut.dependencies]
-          runtime = [
-            "io.micronaut:micronaut-http-server-netty",
-            "io.micronaut:micronaut-json-core",
-            "io.micronaut:micronaut-jackson-databind",
-            "ch.qos.logback:logback-classic"
-          ]
-          build = []
-          test = [
-            "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
-            "io.micronaut.test:micronaut-test-junit5",
-            "io.micronaut.pyronaut:micronaut-pyronaut-requests"
-          ]
-          TOML
-
-          cat > "$project/src/controllers.py" <<'PY'
-          from micronaut.http.annotation import Get
-
-
-          @Get(value="/", produces="text/plain")
-          def index() -> str:
-              return "Hello from Pyronaut"
-          PY
-
-          cat > "$project/config/application.toml" <<'TOML'
-          [micronaut.application]
-          name = "hello-pyronaut"
-
-          [micronaut.server]
-          port = 8080
-          TOML
-
-          cat > "$project/tests/test_controller.py" <<'PY'
-          import pytest
-          import requests
-
-          from pyronaut.test import MicronautTest, micronaut_test_fixture
-
-
-          @pytest.fixture
-          def my_context(request):
-              fixture = micronaut_test_fixture(request, MicronautTest())
-              yield fixture
-              fixture.stop()
-
-
-          @pytest.fixture
-          def client(my_context):
-              return requests.with_context(my_context)
-
-
-          def test_index(client):
-              response = client.get("/")
-              assert response.status_code == 200
-              assert response.text == "Hello from Pyronaut"
-          PY
+          cp -R tests/fixtures/hello-world "${{ runner.temp }}/hello-world"
+          find "${{ runner.temp }}/hello-world" -type f | sort
 
       - name: Set up Pyronaut
         id: setup

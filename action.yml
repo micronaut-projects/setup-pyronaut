@@ -80,6 +80,19 @@ inputs:
     description: 'Additional pip requirements to install into the GraalPy environment, one per line.'
     required: false
     default: ''
+  install-project:
+    description: >-
+      Install the project itself into the GraalPy environment with `pip install -e .`, which is how
+      `[project].dependencies` reach the runtime `pyronaut test` uses. `auto` installs it when
+      `pyproject.toml` declares any, `true` always, `false` never.
+    required: false
+    default: 'auto'
+  requirements:
+    description: >-
+      pip requirement files to install into the GraalPy environment, one path per line. `auto` uses
+      the project's `requirements.txt` when it has one; `false` uses none.
+    required: false
+    default: 'auto'
   venv-dir:
     description: >-
       Directory for the GraalPy virtual environment. Defaults to `<project-dir>/.venv`, which is
@@ -186,6 +199,12 @@ outputs:
   python:
     description: 'Absolute path of the GraalPy interpreter inside the project environment.'
     value: ${{ steps.graalpy.outputs.python }}
+  install-project:
+    description: 'Whether the project was installed into the GraalPy environment with `pip install -e .`.'
+    value: ${{ steps.graalpy-resolve.outputs.install-project }}
+  requirements-files:
+    description: 'Requirement files installed into the GraalPy environment, one path per line.'
+    value: ${{ steps.graalpy-resolve.outputs.requirements-files }}
   local-repository:
     description: 'Maven local repository used by Pyronaut.'
     value: ${{ steps.preflight.outputs.local-repository }}
@@ -253,6 +272,8 @@ runs:
         INPUT_GRAALPY_PYTHON_VERSION: ${{ inputs.graalpy-python-version }}
         INPUT_PYTEST_VERSION: ${{ inputs.pytest-version }}
         INPUT_PYTHON_PACKAGES: ${{ inputs.python-packages }}
+        INPUT_INSTALL_PROJECT: ${{ inputs.install-project }}
+        INPUT_REQUIREMENTS: ${{ inputs.requirements }}
         INPUT_VENV_DIR: ${{ inputs.venv-dir }}
         PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
         CLI_GRAALPY_VERSION: ${{ steps.cli.outputs.graalpy-version }}
@@ -279,6 +300,9 @@ runs:
         PYTEST_REQUIREMENT: ${{ steps.graalpy-resolve.outputs.pytest-requirement }}
         VENV_DIR: ${{ steps.graalpy-resolve.outputs.venv-dir }}
         VENV_MARKER: ${{ steps.graalpy-resolve.outputs.venv-marker }}
+        REQUIREMENTS_FILES: ${{ steps.graalpy-resolve.outputs.requirements-files }}
+        INSTALL_PROJECT: ${{ steps.graalpy-resolve.outputs.install-project }}
+        PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
         INPUT_PYTHON_PACKAGES: ${{ inputs.python-packages }}
         INPUT_ACTIVATE_VENV: ${{ steps.preflight.outputs.activate-venv }}
       run: '"${{ github.action_path }}/scripts/setup-graalpy.sh"'

@@ -145,6 +145,10 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "venv" ]; then
   cp "$0" "$3/bin/python"
   exit 0
 fi
+if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
+  printf '%s\n' "$*" >>"${STUB_PIP_LOG:?}"
+  exit 0
+fi
 printf 'GraalPy stub 3.13.14 (Graal, Oracle GraalVM)\n'
 exit 0
 GRAALPY
@@ -159,7 +163,11 @@ run_setup_graalpy() {
     VENV_MARKER="${VENV_MARKER:-graalpy3.13-25.3.4.1 pytest}" \
     INPUT_PYTHON_PACKAGES="${INPUT_PYTHON_PACKAGES:-}" \
     INPUT_ACTIVATE_VENV="${INPUT_ACTIVATE_VENV:-false}" \
+    REQUIREMENTS_FILES="${REQUIREMENTS_FILES:-}" \
+    INSTALL_PROJECT="${INSTALL_PROJECT:-false}" \
+    PROJECT_DIR="${PROJECT_DIR:-$WORK/project}" \
     STUB_VENV_LOG="$WORK/venv-created" \
+    STUB_PIP_LOG="$WORK/pip-calls" \
     "$SCRIPTS/setup-graalpy.sh" 2>&1
 }
 
@@ -353,6 +361,8 @@ run_resolve_graalpy() {
     INPUT_GRAALPY_PYTHON_VERSION="${INPUT_GRAALPY_PYTHON_VERSION:-3.13}" \
     INPUT_PYTEST_VERSION="${INPUT_PYTEST_VERSION:-latest}" \
     INPUT_PYTHON_PACKAGES="${INPUT_PYTHON_PACKAGES:-}" \
+    INPUT_INSTALL_PROJECT="${INPUT_INSTALL_PROJECT:-auto}" \
+    INPUT_REQUIREMENTS="${INPUT_REQUIREMENTS:-auto}" \
     INPUT_VENV_DIR="${INPUT_VENV_DIR:-}" \
     PROJECT_DIR="${PROJECT_DIR:-$WORK/project}" \
     CLI_GRAALPY_VERSION="${CLI_GRAALPY_VERSION:-}" \
@@ -562,6 +572,172 @@ setup_reports_a_failure() {
   check_contains "points at the token" "$out" "github-token"
 }
 
+# -- project dependencies ----------------------------------------------------
+
+deps_auto_detects_declared_dependencies() {
+  mkdir -p "$WORK/project"
+  printf '[project]\nname = "demo"\ndependencies = ["six"]\n' >"$WORK/project/pyproject.toml"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  check "installs the project" "$(output install-project)" "true"
+  check_contains "records the project in the marker" "$(output venv-marker)" " -e:"
+}
+
+deps_auto_skips_a_project_without_dependencies() {
+  mkdir -p "$WORK/project"
+  # The minimal Pyronaut project: Java dependencies only, no Python ones.
+  printf '[project]\nname = "demo"\n\n[tool.pyronaut.dependencies]\nruntime = ["io.micronaut:micronaut-http-server-netty"]\n' \
+    >"$WORK/project/pyproject.toml"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  check "does not install the project" "$(output install-project)" "false"
+  check "leaves it out of the marker" \
+    "$(printf '%s' "$(output venv-marker)" | grep -c -- ' -e:')" "0"
+}
+
+deps_auto_handles_a_multiline_dependencies_array() {
+  mkdir -p "$WORK/project"
+  printf '[project]\nname = "demo"\ndependencies = [\n  "six",\n  "requests>=2",\n]\n' \
+    >"$WORK/project/pyproject.toml"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  check "installs the project" "$(output install-project)" "true"
+}
+
+deps_auto_ignores_extras_only_dependencies() {
+  mkdir -p "$WORK/project"
+  printf '[project]\nname = "demo"\ndependencies = [\n  "pytest; extra == \x27dev\x27",\n]\n' \
+    >"$WORK/project/pyproject.toml"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  check "treats an extras-only requirement as nothing declared" "$(output install-project)" "false"
+}
+
+deps_auto_ignores_other_dependency_tables() {
+  mkdir -p "$WORK/project"
+  # Only [project].dependencies counts; the Pyronaut and optional tables must
+  # not be mistaken for it.
+  printf '[project]\nname = "demo"\n\n[project.optional-dependencies]\ndev = ["black"]\n\n[tool.pyronaut.dependencies]\nruntime = ["io.micronaut:micronaut-http-server-netty"]\n' \
+    >"$WORK/project/pyproject.toml"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  check "does not install the project" "$(output install-project)" "false"
+}
+
+deps_install_project_can_be_forced_and_disabled() {
+  mkdir -p "$WORK/project"
+  printf '[project]\nname = "demo"\n' >"$WORK/project/pyproject.toml"
+  INPUT_GRAALPY_VERSION=25.3.4.1 INPUT_INSTALL_PROJECT=true run_resolve_graalpy >/dev/null
+  check "forced on" "$(output install-project)" "true"
+
+  : >"$GITHUB_OUTPUT"
+  printf '[project]\nname = "demo"\ndependencies = ["six"]\n' >"$WORK/project/pyproject.toml"
+  INPUT_GRAALPY_VERSION=25.3.4.1 INPUT_INSTALL_PROJECT=false run_resolve_graalpy >/dev/null
+  check "forced off despite declared dependencies" "$(output install-project)" "false"
+}
+
+deps_install_project_needs_a_pyproject() {
+  mkdir -p "$WORK/project"
+  local out status
+  out="$(INPUT_GRAALPY_VERSION=25.3.4.1 INPUT_INSTALL_PROJECT=true run_resolve_graalpy)"
+  status=$?
+  check "fails when forced without a pyproject.toml" "$status" "1"
+  check_contains "says why" "$out" "no pyproject.toml"
+}
+
+deps_rejects_a_bad_install_project() {
+  mkdir -p "$WORK/project"
+  local out status
+  out="$(INPUT_GRAALPY_VERSION=25.3.4.1 INPUT_INSTALL_PROJECT=maybe run_resolve_graalpy)"
+  status=$?
+  check "fails" "$status" "1"
+  check_contains "names the input" "$out" "Input 'install-project' must be auto, true or false"
+}
+
+deps_auto_detects_requirements_txt() {
+  mkdir -p "$WORK/project"
+  printf 'typing-extensions\n' >"$WORK/project/requirements.txt"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  check "finds it" "$(output requirements-files)" "$WORK/project/requirements.txt"
+  check_contains "records it in the marker" "$(output venv-marker)" " -r:"
+}
+
+deps_requirements_can_be_listed_and_disabled() {
+  mkdir -p "$WORK/project"
+  printf 'six\n' >"$WORK/project/base.txt"
+  printf 'typing-extensions\n' >"$WORK/project/dev.txt"
+  printf 'ignored\n' >"$WORK/project/requirements.txt"
+  INPUT_GRAALPY_VERSION=25.3.4.1 INPUT_REQUIREMENTS="$WORK/project/base.txt
+$WORK/project/dev.txt" run_resolve_graalpy >/dev/null
+  check "uses the listed files instead of requirements.txt" "$(output requirements-files)" \
+    "$WORK/project/base.txt
+$WORK/project/dev.txt"
+
+  : >"$GITHUB_OUTPUT"
+  INPUT_GRAALPY_VERSION=25.3.4.1 INPUT_REQUIREMENTS=false run_resolve_graalpy >/dev/null
+  check "false uses none" "$(output requirements-files)" ""
+}
+
+deps_rejects_a_missing_requirements_file() {
+  mkdir -p "$WORK/project"
+  local out status
+  out="$(INPUT_GRAALPY_VERSION=25.3.4.1 INPUT_REQUIREMENTS="$WORK/project/nope.txt" run_resolve_graalpy)"
+  status=$?
+  check "fails" "$status" "1"
+  check_contains "names the file" "$out" "requirements file does not exist"
+}
+
+deps_cache_key_tracks_requirement_contents() {
+  mkdir -p "$WORK/project"
+  printf 'six\n' >"$WORK/project/requirements.txt"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  local first
+  first="$(output cache-key)"
+
+  : >"$GITHUB_OUTPUT"
+  printf 'six\ntyping-extensions\n' >"$WORK/project/requirements.txt"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  check "editing requirements.txt changes the key" \
+    "$([ "$(output cache-key)" != "$first" ] && echo differs)" "differs"
+}
+
+deps_cache_key_tracks_pyproject_contents() {
+  mkdir -p "$WORK/project"
+  printf '[project]\nname = "demo"\ndependencies = ["six"]\n' >"$WORK/project/pyproject.toml"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  local first
+  first="$(output cache-key)"
+
+  : >"$GITHUB_OUTPUT"
+  printf '[project]\nname = "demo"\ndependencies = ["six", "attrs"]\n' >"$WORK/project/pyproject.toml"
+  INPUT_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  check "adding a dependency changes the key" \
+    "$([ "$(output cache-key)" != "$first" ] && echo differs)" "differs"
+}
+
+deps_are_installed_into_the_environment() {
+  mkdir -p "$WORK/project"
+  printf '[project]\nname = "demo"\ndependencies = ["six"]\n' >"$WORK/project/pyproject.toml"
+  printf 'typing-extensions\n' >"$WORK/project/requirements.txt"
+  stub_pyenv_root "$WORK/pyenv" graalpy3.13-25.3.4.1
+  : >"$WORK/venv-created"
+  : >"$WORK/pip-calls"
+  REQUIREMENTS_FILES="$WORK/project/requirements.txt" INSTALL_PROJECT=true \
+    PROJECT_DIR="$WORK/project" run_setup_graalpy >/dev/null
+  local install_call
+  install_call="$(grep -- '--no-compile' "$WORK/pip-calls")"
+  check_contains "installs pytest" "$install_call" "pytest"
+  check_contains "installs the requirement file" "$install_call" "-r $WORK/project/requirements.txt"
+  check_contains "installs the project editable" "$install_call" "-e $WORK/project"
+}
+
+deps_are_skipped_when_not_requested() {
+  mkdir -p "$WORK/project"
+  stub_pyenv_root "$WORK/pyenv" graalpy3.13-25.3.4.1
+  : >"$WORK/venv-created"
+  : >"$WORK/pip-calls"
+  run_setup_graalpy >/dev/null
+  local install_call
+  install_call="$(grep -- '--no-compile' "$WORK/pip-calls")"
+  check "installs nothing but pytest" \
+    "$(printf '%s' "$install_call" | grep -c -- '-e \|-r ')" "0"
+}
+
 # -- write-settings ----------------------------------------------------------
 
 run_write_settings() {
@@ -759,6 +935,22 @@ test_case "run-setup: appends extra arguments" setup_appends_extra_arguments
 test_case "run-setup: lets the workflow keep progress" setup_lets_the_workflow_keep_progress
 test_case "run-setup: warns about a packed argument" setup_warns_about_a_packed_argument
 test_case "run-setup: reports a failure" setup_reports_a_failure
+
+test_case "deps: auto-detects declared dependencies" deps_auto_detects_declared_dependencies
+test_case "deps: auto skips a project without dependencies" deps_auto_skips_a_project_without_dependencies
+test_case "deps: handles a multi-line dependencies array" deps_auto_handles_a_multiline_dependencies_array
+test_case "deps: ignores extras-only dependencies" deps_auto_ignores_extras_only_dependencies
+test_case "deps: ignores other dependency tables" deps_auto_ignores_other_dependency_tables
+test_case "deps: install-project can be forced and disabled" deps_install_project_can_be_forced_and_disabled
+test_case "deps: install-project needs a pyproject" deps_install_project_needs_a_pyproject
+test_case "deps: rejects a bad install-project" deps_rejects_a_bad_install_project
+test_case "deps: auto-detects requirements.txt" deps_auto_detects_requirements_txt
+test_case "deps: requirements can be listed and disabled" deps_requirements_can_be_listed_and_disabled
+test_case "deps: rejects a missing requirements file" deps_rejects_a_missing_requirements_file
+test_case "deps: the cache key tracks requirement contents" deps_cache_key_tracks_requirement_contents
+test_case "deps: the cache key tracks pyproject contents" deps_cache_key_tracks_pyproject_contents
+test_case "deps: are installed into the environment" deps_are_installed_into_the_environment
+test_case "deps: are skipped when not requested" deps_are_skipped_when_not_requested
 
 test_case "write-settings: renders and applies" settings_render_and_apply
 test_case "write-settings: escapes TOML strings" settings_escape_quotes

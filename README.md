@@ -24,6 +24,7 @@ GraalVM, creates `.venv` from GraalPy with `pytest` in it, and runs `pyronaut se
 ## Contents
 
 - [What it does](#what-it-does)
+- [Python dependencies](#python-dependencies)
 - [Caching](#caching)
 - [Usage](#usage)
 - [Inputs](#inputs)
@@ -43,15 +44,58 @@ The action runs these steps, in order:
    stops `pyronaut setup` from downloading a second GraalVM of its own.
 3. **Pyronaut CLI.** Installs the wheel into a dedicated CPython virtual environment and puts
    `pyronaut` on `PATH`. Reads `pyronaut --version` to learn which GraalPy that CLI expects.
-4. **GraalPy and pytest.** Installs GraalPy through `pyenv` and builds the project's `.venv` from
-   it, with `pytest` inside. `pyronaut test` runs pytest on the embedded GraalPy runtime, and a
-   CPython environment cannot supply packages to it, so this environment has to be created by
-   GraalPy itself.
+4. **GraalPy, pytest and the project's Python dependencies.** Installs GraalPy through `pyenv`
+   and builds the project's `.venv` from it, with `pytest` and the project's own dependencies
+   inside. `pyronaut test` runs pytest on the embedded GraalPy runtime, and a CPython environment
+   cannot supply packages to it, so this environment has to be created by GraalPy itself — see
+   [Python dependencies](#python-dependencies).
 5. **Settings.** Writes `~/.pyronaut/settings.toml` when any of the settings inputs are given.
 6. **`pyronaut setup`.** Provisions the SDK toolchain, downloads the native launchers and resolves
    the SDK classpaths into the Maven repository.
 
 Steps 2 and 4 can be turned off individually when a workflow already provides them.
+
+## Python dependencies
+
+Pyronaut resolves Java dependencies itself, but Python packages reach the runtime only through the
+project's GraalPy environment. `pyronaut doctor` makes this explicit: it **fails** a project whose
+`[project].dependencies` are not importable from `.venv`, and the fix it prints is
+
+```bash
+graalpy -m venv .venv && .venv/bin/python -m pip install -e .
+```
+
+So the action does exactly that. Alongside `pytest` it installs:
+
+- **the project itself**, with `pip install -e .`, whenever `pyproject.toml` declares any
+  `[project].dependencies`. That is what brings them into the environment `pyronaut test` uses.
+- **`requirements.txt`**, when the project has one. Pyronaut does not read requirements files, but
+  they are common enough in Python projects to be worth honouring.
+
+Both are on by default and both are detected, not configured:
+
+```yaml
+- uses: micronaut-projects/setup-pyronaut@v1
+  # Nothing to declare: a project with [project].dependencies or a
+  # requirements.txt gets them installed into the GraalPy environment.
+```
+
+Override either when the detection is not what you want:
+
+```yaml
+- uses: micronaut-projects/setup-pyronaut@v1
+  with:
+    install-project: 'false'      # never `pip install -e .`
+    requirements: |               # these files instead of requirements.txt
+      requirements.txt
+      requirements-dev.txt
+```
+
+The contents of `pyproject.toml` and of every requirement file are hashed into the GraalPy cache
+key, so changing a dependency rebuilds the environment instead of restoring a stale one.
+
+A project that declares no Python dependencies is left alone — no editable install is attempted,
+so a project without a working build backend is never forced through one.
 
 ## Caching
 
@@ -60,7 +104,7 @@ Three caches, each keyed on what actually invalidates it:
 | Cache | Contents | Key |
 | --- | --- | --- |
 | SDK | `~/.pyronaut` — the setup manifest, provisioned JDKs, native launchers and resolved tool runtime | OS, architecture, Pyronaut version, the exact GraalVM in use, and the contents of `settings.toml` |
-| GraalPy | `~/.pyenv` and the project environment | OS, architecture, the pyenv GraalPy identifier, and every requirement installed into the environment |
+| GraalPy | `~/.pyenv` and the project environment | OS, architecture, the pyenv GraalPy identifier, and every requirement installed into the environment — including the contents of `pyproject.toml` and any requirement files, so changing a dependency rebuilds it |
 | Maven | `~/.m2/repository` | OS, architecture, Pyronaut version, and a hash of the project's `pyproject.toml` |
 
 A few details worth knowing:
@@ -214,6 +258,8 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 | `graalpy-python-version` | `3.13` | Python feature version used to build a pyenv identifier from a bare GraalPy version. |
 | `pytest-version` | `latest` | `latest`, an exact version, or a PEP 440 specifier. |
 | `python-packages` | | Extra pip requirements for the GraalPy environment, one per line. |
+| `install-project` | `auto` | Install the project with `pip install -e .`, which is how `[project].dependencies` reach the runtime. `auto` installs it when `pyproject.toml` declares any, `true` always, `false` never. |
+| `requirements` | `auto` | Requirement files to install, one path per line. `auto` uses the project's `requirements.txt` when it has one; `false` uses none. |
 | `venv-dir` | `<project-dir>/.venv` | Where the GraalPy environment goes. Pyronaut looks for a project `.venv`. |
 | `activate-venv` | `false` | Put the environment on `PATH` and export `VIRTUAL_ENV`, making `python` GraalPy for the rest of the job. |
 
@@ -254,6 +300,8 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 | `java-home` | The GraalVM installation Pyronaut uses. |
 | `venv-dir` | The GraalPy environment created for the project. |
 | `python` | Absolute path of the GraalPy interpreter in that environment. |
+| `install-project` | Whether the project was installed with `pip install -e .`. |
+| `requirements-files` | Requirement files installed into the GraalPy environment, one path per line. |
 | `local-repository` | The Maven local repository Pyronaut uses. |
 | `cache-hit` | `true` when `~/.pyronaut` was restored from an exact key match. |
 | `graalpy-cache-hit` | `true` when the GraalPy cache was restored from an exact key match. |
@@ -318,6 +366,11 @@ CI runs on every push: shellcheck, shfmt, actionlint, the unit suite on Linux an
 action itself end to end — including a second invocation that has to come back with `cache-hit` set.
 `.github/workflows/integration.yml` is the manual counterpart: it runs the action against the real
 Pyronaut CLI and a real hello-world project, all the way through `pyronaut test`.
+
+Test fixtures are real files under `tests/fixtures`, not heredocs inside the workflows, so they can
+be read and edited like ordinary source: `hello-world` is the minimal application from the Pyronaut
+README that the integration workflow drives end to end, and `demo-project` is the project the CI
+`Action` jobs set up against.
 
 `tests/fixtures/stub-cli` is a stand-in for the real Pyronaut CLI. It reproduces the parts this
 action contracts on — the `--version` report and an idempotent `setup` — so CI can exercise the

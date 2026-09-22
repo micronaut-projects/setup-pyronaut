@@ -52,6 +52,20 @@ done <<EOF
 $(meaningful_lines "${INPUT_PYTHON_PACKAGES:-}")
 EOF
 
+# The project's own requirement files, resolved by the previous step.
+while IFS= read -r file; do
+  [ -n "$file" ] || continue
+  requirements+=("-r" "$file")
+done <<EOF
+${REQUIREMENTS_FILES:-}
+EOF
+
+# An editable install of the project itself, which is what brings
+# `[project].dependencies` into the environment `pyronaut test` uses.
+if [ "${INSTALL_PROJECT:-false}" = "true" ]; then
+  requirements+=("-e" "$PROJECT_DIR")
+fi
+
 venv_python="$VENV_DIR/bin/python"
 if [ -x "$venv_python" ] &&
   [ -f "$marker_file" ] &&

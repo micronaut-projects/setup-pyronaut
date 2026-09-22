@@ -81,15 +81,9 @@ jobs:
 
       - name: Create a project fixture
         run: |
-          mkdir -p "${{ runner.temp }}/demo"
-          cat > "${{ runner.temp }}/demo/pyproject.toml" <<'TOML'
-          [project]
-          name = "demo"
-          version = "0.1.0"
-
-          [tool.pyronaut.dependencies]
-          runtime = ["io.micronaut:micronaut-http-server-netty"]
-          TOML
+          set -euo pipefail
+          cp -R tests/fixtures/demo-project "${{ runner.temp }}/demo"
+          find "${{ runner.temp }}/demo" -type f | sort
 
       - name: Set up Pyronaut
         id: setup
@@ -106,6 +100,8 @@ jobs:
           PYRONAUT_VERSION: ${{ steps.setup.outputs.pyronaut-version }}
           GRAALPY_VERSION: ${{ steps.setup.outputs.graalpy-version }}
           GRAALPY_PYENV_VERSION: ${{ steps.setup.outputs.graalpy-pyenv-version }}
+          INSTALL_PROJECT: ${{ steps.setup.outputs.install-project }}
+          REQUIREMENTS_FILES: ${{ steps.setup.outputs.requirements-files }}
           JAVA_HOME_OUT: ${{ steps.setup.outputs.java-home }}
           VENV_DIR: ${{ steps.setup.outputs.venv-dir }}
           PYTHON: ${{ steps.setup.outputs.python }}
@@ -116,6 +112,10 @@ jobs:
           test "$PYRONAUT_VERSION" = "0.0.0.dev0"
           test "$GRAALPY_VERSION" = "25.3.4.1"
           test "$GRAALPY_PYENV_VERSION" = "graalpy3.13-25.3.4.1"
+          # The fixture declares [project].dependencies and has a
+          # requirements.txt, so auto-detection must have found both.
+          test "$INSTALL_PROJECT" = "true"
+          test "$REQUIREMENTS_FILES" = "${{ runner.temp }}/demo/requirements.txt"
           test "$VENV_DIR" = "${{ runner.temp }}/demo/.venv"
           test "$CACHE_HIT" = "false"
           test -x "$PYRONAUT"
@@ -133,6 +133,12 @@ jobs:
           # pytest is importable from the project environment, on GraalPy.
           "${{ steps.setup.outputs.python }}" -m pytest --version
           "${{ steps.setup.outputs.python }}" -c 'import sys; assert "graal" in sys.version.lower(), sys.version'
+          # The project's own dependencies reached the GraalPy environment too:
+          # `six` via the editable install of [project].dependencies, and
+          # `typing_extensions` via requirements.txt. Neither is a pytest
+          # dependency, so importing them proves the action installed them.
+          "${{ steps.setup.outputs.python }}" -c 'import six; print("six", six.__version__)'
+          "${{ steps.setup.outputs.python }}" -c 'import typing_extensions; print("typing_extensions ok")'
           # `pyronaut setup` wrote its manifest.
           ls "$HOME/.pyronaut/setup/0.0.0.dev0/"*/setup.json
           # The runner's own python is untouched, because activate-venv is off.
