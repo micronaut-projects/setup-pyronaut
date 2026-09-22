@@ -1,0 +1,10 @@
+# Build output from the stub CLI fixture
+tests/fixtures/stub-cli/build/
+tests/fixtures/stub-cli/dist/
+tests/fixtures/stub-cli/src/*.egg-info/
+__pycache__/
+*.pyc
+
+# Local tool downloads
+/actionlint
+/shfmt

@@ -1,0 +1,16 @@
+version: 2
+
+updates:
+  # The composite action pins graalvm/setup-graalvm and actions/cache to commit
+  # shas, so those pins need an owner. Dependabot rewrites them and keeps the
+  # `# vX.Y.Z` comment in step.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    groups:
+      actions:
+        patterns:
+          - '*'
