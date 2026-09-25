@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       pyronaut-version:
-        description: 'Pyronaut version to install from PyPI, or `latest`.'
+        description: 'Pyronaut release to install the wheel from, or `latest`.'
         required: false
         default: 'latest'
       graalvm-version:
