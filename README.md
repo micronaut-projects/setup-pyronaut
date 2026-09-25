@@ -366,6 +366,9 @@ CI runs on every push: shellcheck, shfmt, actionlint, the unit suite on Linux an
 action itself end to end — including a second invocation that has to come back with `cache-hit` set.
 `.github/workflows/integration.yml` is the manual counterpart: it runs the action against the real
 Pyronaut CLI and a real hello-world project, all the way through `pyronaut test`.
+`.github/workflows/update-pyronaut-version.yml` opens a pull request moving the `pyronaut-version`
+default to each new Pyronaut release. The Pyronaut release workflow triggers it with a
+`pyronaut-release` repository dispatch, and a daily run catches any dispatch that was missed.
 
 Test fixtures are real files under `tests/fixtures`, not heredocs inside the workflows, so they can
 be read and edited like ordinary source: `hello-world` is the minimal application from the Pyronaut
