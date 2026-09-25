@@ -1,0 +1,409 @@
+name: 'Setup Pyronaut'
+description: >-
+  Provision everything Pyronaut needs in CI: a GraalVM JDK, the Pyronaut CLI, a GraalPy
+  environment with pytest, and a completed `pyronaut setup` — with every downloaded SDK cached.
+author: 'Micronaut Project'
+
+branding:
+  icon: 'zap'
+  color: 'purple'
+
+inputs:
+  # -- Pyronaut CLI ----------------------------------------------------------
+  pyronaut-version:
+    description: >-
+      Version of the Pyronaut CLI to install from PyPI. Use `latest` for the newest release, an
+      exact version such as `0.0.3`, or a PEP 440 specifier such as `>=0.0.3,<0.1`.
+      Ignored when `pyronaut-wheel` is set.
+    required: false
+    default: 'latest'
+  pyronaut-wheel:
+    description: >-
+      Path, glob, or URL of a Pyronaut wheel to install instead of resolving one from PyPI.
+      A glob must match exactly one file. Relative paths resolve against the workspace.
+    required: false
+    default: ''
+  cli-venv-dir:
+    description: >-
+      Directory for the CPython virtual environment that holds the Pyronaut CLI. Its `bin`
+      directory is prepended to `PATH`.
+    required: false
+    default: ''
+
+  # -- GraalVM ---------------------------------------------------------------
+  graalvm:
+    description: >-
+      Set up a GraalVM JDK via `graalvm/setup-graalvm`. Set to `false` when the workflow already
+      provides a GraalVM 25+ `JAVA_HOME`.
+    required: false
+    default: 'true'
+  java-version:
+    description: 'Java version for the GraalVM JDK. Pyronaut requires 25 or later.'
+    required: false
+    default: '25'
+  graalvm-version:
+    description: >-
+      GraalVM release passed to `graalvm/setup-graalvm` (for example `25.3`, `latest`, or `dev`).
+      Leave empty to let that action pick the default for the distribution.
+    required: false
+    default: '25.3'
+  graalvm-distribution:
+    description: 'GraalVM distribution passed to `graalvm/setup-graalvm` (`graalvm` or `graalvm-community`).'
+    required: false
+    default: 'graalvm'
+
+  # -- GraalPy ---------------------------------------------------------------
+  graalpy:
+    description: >-
+      Install GraalPy and create a GraalPy-backed virtual environment for the project.
+      Required for `pyronaut test`; set to `false` for jobs that never run pytest.
+    required: false
+    default: 'true'
+  graalpy-version:
+    description: >-
+      GraalPy to install. Accepts a full pyenv identifier (`graalpy3.13-25.3.4.1`) or a bare
+      GraalVM version (`25.3.4.1`). Leave empty to use the version bundled with the installed
+      Pyronaut CLI.
+    required: false
+    default: ''
+  graalpy-python-version:
+    description: 'Python feature version used to build a pyenv identifier from a bare GraalPy version.'
+    required: false
+    default: '3.13'
+  pytest-version:
+    description: >-
+      pytest version to install into the GraalPy environment. Use `latest` for the newest release,
+      or an exact version such as `9.0.3`.
+    required: false
+    default: 'latest'
+  python-packages:
+    description: 'Additional pip requirements to install into the GraalPy environment, one per line.'
+    required: false
+    default: ''
+  install-project:
+    description: >-
+      Install the project itself into the GraalPy environment with `pip install -e .`, which is how
+      `[project].dependencies` reach the runtime `pyronaut test` uses. `auto` installs it when
+      `pyproject.toml` declares any, `true` always, `false` never.
+    required: false
+    default: 'auto'
+  requirements:
+    description: >-
+      pip requirement files to install into the GraalPy environment, one path per line. `auto` uses
+      the project's `requirements.txt` when it has one; `false` uses none.
+    required: false
+    default: 'auto'
+  venv-dir:
+    description: >-
+      Directory for the GraalPy virtual environment. Defaults to `<project-dir>/.venv`, which is
+      where Pyronaut looks for a project environment.
+    required: false
+    default: ''
+  activate-venv:
+    description: >-
+      Prepend the GraalPy environment to `PATH` and export `VIRTUAL_ENV`, making `python` GraalPy
+      for the rest of the job. Off by default so the runner Python stays untouched.
+    required: false
+    default: 'false'
+
+  # -- Pyronaut setup --------------------------------------------------------
+  project-dir:
+    description: 'Project directory used to locate `pyproject.toml` and to place the GraalPy environment.'
+    required: false
+    default: '.'
+  run-setup:
+    description: 'Run `pyronaut setup` once everything is installed.'
+    required: false
+    default: 'true'
+  setup-args:
+    description: 'Extra arguments appended to `pyronaut setup`, one per line.'
+    required: false
+    default: ''
+  run-doctor:
+    description: 'Run `pyronaut doctor` after setup and print its report.'
+    required: false
+    default: 'false'
+  local-repository:
+    description: 'Maven local repository used by Pyronaut. Defaults to `~/.m2/repository`.'
+    required: false
+    default: ''
+  maven-repositories:
+    description: >-
+      Maven repositories written to `[maven].repositories` in `~/.pyronaut/settings.toml`,
+      one per line. Leave empty to keep Pyronaut's defaults.
+    required: false
+    default: ''
+  native-images-base-url:
+    description: 'Value for `[native-images].base-url` in `~/.pyronaut/settings.toml`.'
+    required: false
+    default: ''
+  native-images-version:
+    description: 'Value for `[native-images].version` in `~/.pyronaut/settings.toml`.'
+    required: false
+    default: ''
+  native-images-release-tag:
+    description: 'Value for `[native-images].release-tag` in `~/.pyronaut/settings.toml`.'
+    required: false
+    default: ''
+  github-token:
+    description: >-
+      Token used to download native launcher bundles from GitHub releases and to raise API rate
+      limits. The default job token only reaches public releases; set a PAT with `contents: read`
+      on `micronaut-projects/pyronaut` while that repository is private.
+    required: false
+    default: ${{ github.token }}
+
+  # -- Caching ---------------------------------------------------------------
+  cache:
+    description: 'Cache the GraalPy installation and everything `pyronaut setup` provisions under `~/.pyronaut`.'
+    required: false
+    default: 'true'
+  cache-maven:
+    description: 'Cache the Maven local repository that Pyronaut resolves dependencies into.'
+    required: false
+    default: 'true'
+  cache-key-prefix:
+    description: 'Prefix for every cache key this action writes. Bump it to invalidate all caches at once.'
+    required: false
+    default: 'setup-pyronaut-v1'
+  cache-key-suffix:
+    description: 'Extra component appended to every cache key, to keep unrelated jobs from sharing caches.'
+    required: false
+    default: ''
+
+outputs:
+  pyronaut-version:
+    description: 'Version reported by the installed Pyronaut CLI.'
+    value: ${{ steps.cli.outputs.pyronaut-version }}
+  pyronaut:
+    description: 'Absolute path of the `pyronaut` executable.'
+    value: ${{ steps.cli.outputs.pyronaut }}
+  pyronaut-home:
+    description: 'Pyronaut state directory (`~/.pyronaut`).'
+    value: ${{ steps.preflight.outputs.pyronaut-home }}
+  micronaut-core-version:
+    description: 'Micronaut Core version bundled with the installed CLI.'
+    value: ${{ steps.cli.outputs.micronaut-core-version }}
+  graalpy-version:
+    description: 'GraalPy version that was installed, for example `25.3.4.1`.'
+    value: ${{ steps.graalpy-resolve.outputs.graalpy-version }}
+  graalpy-pyenv-version:
+    description: 'pyenv identifier of the installed GraalPy, for example `graalpy3.13-25.3.4.1`.'
+    value: ${{ steps.graalpy-resolve.outputs.pyenv-version }}
+  java-home:
+    description: 'GraalVM installation used by Pyronaut.'
+    value: ${{ steps.java.outputs.java-home }}
+  venv-dir:
+    description: 'GraalPy virtual environment created for the project.'
+    value: ${{ steps.graalpy-resolve.outputs.venv-dir }}
+  python:
+    description: 'Absolute path of the GraalPy interpreter inside the project environment.'
+    value: ${{ steps.graalpy.outputs.python }}
+  install-project:
+    description: 'Whether the project was installed into the GraalPy environment with `pip install -e .`.'
+    value: ${{ steps.graalpy-resolve.outputs.install-project }}
+  requirements-files:
+    description: 'Requirement files installed into the GraalPy environment, one path per line.'
+    value: ${{ steps.graalpy-resolve.outputs.requirements-files }}
+  local-repository:
+    description: 'Maven local repository used by Pyronaut.'
+    value: ${{ steps.preflight.outputs.local-repository }}
+  cache-hit:
+    description: 'Whether the Pyronaut SDK cache (`~/.pyronaut`) was restored from an exact key match.'
+    value: ${{ steps.sdk-cache-restore.outputs.cache-hit == 'true' }}
+  graalpy-cache-hit:
+    description: 'Whether the GraalPy cache was restored from an exact key match.'
+    value: ${{ steps.graalpy-cache-restore.outputs.cache-hit == 'true' }}
+
+runs:
+  using: composite
+  steps:
+    - name: Preflight
+      id: preflight
+      shell: bash
+      env:
+        INPUT_PROJECT_DIR: ${{ inputs.project-dir }}
+        INPUT_LOCAL_REPOSITORY: ${{ inputs.local-repository }}
+        INPUT_CLI_VENV_DIR: ${{ inputs.cli-venv-dir }}
+        INPUT_CACHE_KEY_PREFIX: ${{ inputs.cache-key-prefix }}
+        INPUT_CACHE_KEY_SUFFIX: ${{ inputs.cache-key-suffix }}
+        INPUT_GRAALVM: ${{ inputs.graalvm }}
+        INPUT_GRAALPY: ${{ inputs.graalpy }}
+        INPUT_ACTIVATE_VENV: ${{ inputs.activate-venv }}
+        INPUT_RUN_SETUP: ${{ inputs.run-setup }}
+        INPUT_RUN_DOCTOR: ${{ inputs.run-doctor }}
+        INPUT_CACHE: ${{ inputs.cache }}
+        INPUT_CACHE_MAVEN: ${{ inputs.cache-maven }}
+      run: '"${{ github.action_path }}/scripts/preflight.sh"'
+
+    - name: Set up GraalVM
+      if: steps.preflight.outputs.graalvm == 'true'
+      uses: graalvm/setup-graalvm@0426e2e191540e8514dff98dc52a5f5146a2a276 # v1.6.6
+      with:
+        distribution: ${{ inputs.graalvm-distribution }}
+        java-version: ${{ inputs.java-version }}
+        version: ${{ inputs.graalvm-version }}
+        github-token: ${{ inputs.github-token }}
+        set-java-home: 'true'
+
+    - name: Verify GraalVM
+      id: java
+      shell: bash
+      env:
+        INPUT_JAVA_VERSION: ${{ inputs.java-version }}
+      run: '"${{ github.action_path }}/scripts/verify-graalvm.sh"'
+
+    - name: Install Pyronaut CLI
+      id: cli
+      shell: bash
+      env:
+        INPUT_PYRONAUT_VERSION: ${{ inputs.pyronaut-version }}
+        INPUT_PYRONAUT_WHEEL: ${{ inputs.pyronaut-wheel }}
+        CLI_VENV_DIR: ${{ steps.preflight.outputs.cli-venv-dir }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: '"${{ github.action_path }}/scripts/install-cli.sh"'
+
+    - name: Resolve GraalPy version
+      id: graalpy-resolve
+      shell: bash
+      env:
+        INPUT_GRAALPY: ${{ steps.preflight.outputs.graalpy }}
+        INPUT_GRAALPY_VERSION: ${{ inputs.graalpy-version }}
+        INPUT_GRAALPY_PYTHON_VERSION: ${{ inputs.graalpy-python-version }}
+        INPUT_PYTEST_VERSION: ${{ inputs.pytest-version }}
+        INPUT_PYTHON_PACKAGES: ${{ inputs.python-packages }}
+        INPUT_INSTALL_PROJECT: ${{ inputs.install-project }}
+        INPUT_REQUIREMENTS: ${{ inputs.requirements }}
+        INPUT_VENV_DIR: ${{ inputs.venv-dir }}
+        PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
+        CLI_GRAALPY_VERSION: ${{ steps.cli.outputs.graalpy-version }}
+        CACHE_KEY_BASE: ${{ steps.preflight.outputs.cache-key-base }}
+      run: '"${{ github.action_path }}/scripts/resolve-graalpy.sh"'
+
+    - name: Restore GraalPy cache
+      id: graalpy-cache-restore
+      if: steps.preflight.outputs.graalpy == 'true' && steps.preflight.outputs.cache == 'true'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ${{ steps.preflight.outputs.pyenv-root }}
+          ${{ steps.graalpy-resolve.outputs.venv-dir }}
+        key: ${{ steps.graalpy-resolve.outputs.cache-key }}
+
+    - name: Set up GraalPy and pytest
+      id: graalpy
+      if: steps.preflight.outputs.graalpy == 'true'
+      shell: bash
+      env:
+        PYENV_ROOT: ${{ steps.preflight.outputs.pyenv-root }}
+        PYENV_GRAALPY_VERSION: ${{ steps.graalpy-resolve.outputs.pyenv-version }}
+        PYTEST_REQUIREMENT: ${{ steps.graalpy-resolve.outputs.pytest-requirement }}
+        VENV_DIR: ${{ steps.graalpy-resolve.outputs.venv-dir }}
+        VENV_MARKER: ${{ steps.graalpy-resolve.outputs.venv-marker }}
+        REQUIREMENTS_FILES: ${{ steps.graalpy-resolve.outputs.requirements-files }}
+        INSTALL_PROJECT: ${{ steps.graalpy-resolve.outputs.install-project }}
+        PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
+        INPUT_PYTHON_PACKAGES: ${{ inputs.python-packages }}
+        INPUT_ACTIVATE_VENV: ${{ steps.preflight.outputs.activate-venv }}
+      run: '"${{ github.action_path }}/scripts/setup-graalpy.sh"'
+
+    - name: Save GraalPy cache
+      if: >-
+        steps.preflight.outputs.graalpy == 'true' && steps.preflight.outputs.cache == 'true'
+        && steps.graalpy-cache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ${{ steps.preflight.outputs.pyenv-root }}
+          ${{ steps.graalpy-resolve.outputs.venv-dir }}
+        key: ${{ steps.graalpy-resolve.outputs.cache-key }}
+
+    - name: Render Pyronaut settings
+      id: settings
+      shell: bash
+      env:
+        PYRONAUT_HOME: ${{ steps.preflight.outputs.pyronaut-home }}
+        INPUT_MAVEN_REPOSITORIES: ${{ inputs.maven-repositories }}
+        INPUT_NATIVE_IMAGES_BASE_URL: ${{ inputs.native-images-base-url }}
+        INPUT_NATIVE_IMAGES_VERSION: ${{ inputs.native-images-version }}
+        INPUT_NATIVE_IMAGES_RELEASE_TAG: ${{ inputs.native-images-release-tag }}
+      run: '"${{ github.action_path }}/scripts/write-settings.sh" render'
+
+    - name: Resolve SDK cache key
+      id: sdk-cache-key
+      shell: bash
+      env:
+        CACHE_KEY_BASE: ${{ steps.preflight.outputs.cache-key-base }}
+        PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
+        PYRONAUT_VERSION: ${{ steps.cli.outputs.pyronaut-version }}
+        GRAALVM_ID: ${{ steps.java.outputs.graalvm-id }}
+        SETTINGS_HASH: ${{ steps.settings.outputs.settings-hash }}
+      run: '"${{ github.action_path }}/scripts/resolve-sdk-cache-key.sh"'
+
+    - name: Restore Pyronaut SDK cache
+      id: sdk-cache-restore
+      if: steps.preflight.outputs.cache == 'true'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ steps.preflight.outputs.pyronaut-home }}
+        key: ${{ steps.sdk-cache-key.outputs.cache-key }}
+        restore-keys: ${{ steps.sdk-cache-key.outputs.restore-keys }}
+
+    - name: Cache the Maven local repository
+      if: steps.preflight.outputs.cache-maven == 'true'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ steps.preflight.outputs.local-repository }}
+        key: ${{ steps.sdk-cache-key.outputs.maven-cache-key }}
+        restore-keys: ${{ steps.sdk-cache-key.outputs.maven-restore-keys }}
+
+    - name: Apply Pyronaut settings
+      shell: bash
+      env:
+        PYRONAUT_HOME: ${{ steps.preflight.outputs.pyronaut-home }}
+      run: '"${{ github.action_path }}/scripts/write-settings.sh" apply'
+
+    - name: Run pyronaut setup
+      if: steps.preflight.outputs.run-setup == 'true'
+      shell: bash
+      env:
+        PYRONAUT: ${{ steps.cli.outputs.pyronaut }}
+        INPUT_SETUP_ARGS: ${{ inputs.setup-args }}
+        INPUT_LOCAL_REPOSITORY: ${{ inputs.local-repository }}
+        LOCAL_REPOSITORY: ${{ steps.preflight.outputs.local-repository }}
+        PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: '"${{ github.action_path }}/scripts/run-setup.sh"'
+
+    - name: Save Pyronaut SDK cache
+      if: >-
+        steps.preflight.outputs.cache == 'true' && steps.preflight.outputs.run-setup == 'true'
+        && steps.sdk-cache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ steps.preflight.outputs.pyronaut-home }}
+        key: ${{ steps.sdk-cache-key.outputs.cache-key }}
+
+    - name: Run pyronaut doctor
+      if: steps.preflight.outputs.run-doctor == 'true'
+      shell: bash
+      env:
+        PYRONAUT: ${{ steps.cli.outputs.pyronaut }}
+        PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: '"${{ github.action_path }}/scripts/run-doctor.sh"'
+
+    - name: Summary
+      shell: bash
+      env:
+        PYRONAUT_VERSION: ${{ steps.cli.outputs.pyronaut-version }}
+        MICRONAUT_CORE_VERSION: ${{ steps.cli.outputs.micronaut-core-version }}
+        GRAALVM_LABEL: ${{ steps.java.outputs.graalvm-label }}
+        JAVA_HOME_USED: ${{ steps.java.outputs.java-home }}
+        GRAALPY_PYENV_VERSION: ${{ steps.graalpy-resolve.outputs.pyenv-version }}
+        VENV_DIR: ${{ steps.graalpy-resolve.outputs.venv-dir }}
+        PYRONAUT_HOME: ${{ steps.preflight.outputs.pyronaut-home }}
+        LOCAL_REPOSITORY: ${{ steps.preflight.outputs.local-repository }}
+        SDK_CACHE_HIT: ${{ steps.sdk-cache-restore.outputs.cache-hit }}
+        GRAALPY_CACHE_HIT: ${{ steps.graalpy-cache-restore.outputs.cache-hit }}
+      run: '"${{ github.action_path }}/scripts/summary.sh"'

@@ -1,0 +1,205 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, '[0-9]+.[0-9]+.x']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Run shellcheck
+        run: shellcheck -x -S style scripts/*.sh tests/run-tests.sh
+
+      - name: Run shfmt
+        run: |
+          curl -fsSL -o /tmp/shfmt https://github.com/mvdan/sh/releases/download/v3.10.0/shfmt_v3.10.0_linux_amd64
+          chmod +x /tmp/shfmt
+          /tmp/shfmt --diff --indent 2 --case-indent scripts/*.sh tests/run-tests.sh
+
+      - name: Run actionlint
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash |
+            bash -s -- 1.7.7
+          ./actionlint -color
+
+      - name: Validate action.yml
+        run: python3 tests/validate-action.py
+
+  unit:
+    name: Unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS runners still provide bash 3.2, which is the floor the scripts
+        # are written against; running the suite there is what keeps them honest.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Report the bash version
+        run: bash --version | head -1
+
+      - name: Run the test suite
+        run: ./tests/run-tests.sh
+
+  action:
+    name: Action (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      # The real Pyronaut CLI provisions its SDK from releases of a repository
+      # this workflow has no read access to. The stub under tests/fixtures
+      # reproduces the parts of the CLI this action contracts on — the version
+      # report and an idempotent `setup` — so the composite wiring, the GraalVM
+      # and GraalPy installs and the caching can all be exercised for real.
+      - name: Build the stub Pyronaut CLI
+        run: |
+          python3 -m pip install --quiet --upgrade build
+          python3 -m build --wheel --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
+
+      - name: Create a project fixture
+        run: |
+          set -euo pipefail
+          cp -R tests/fixtures/demo-project "${{ runner.temp }}/demo"
+          find "${{ runner.temp }}/demo" -type f | sort
+
+      - name: Set up Pyronaut
+        id: setup
+        uses: ./
+        with:
+          pyronaut-wheel: ${{ runner.temp }}/stub-dist/pyronaut-*.whl
+          project-dir: ${{ runner.temp }}/demo
+          pytest-version: '9.0.3'
+          run-doctor: 'true'
+          cache-key-suffix: action-test-${{ github.run_id }}
+
+      - name: Check the outputs
+        env:
+          PYRONAUT_VERSION: ${{ steps.setup.outputs.pyronaut-version }}
+          GRAALPY_VERSION: ${{ steps.setup.outputs.graalpy-version }}
+          GRAALPY_PYENV_VERSION: ${{ steps.setup.outputs.graalpy-pyenv-version }}
+          INSTALL_PROJECT: ${{ steps.setup.outputs.install-project }}
+          REQUIREMENTS_FILES: ${{ steps.setup.outputs.requirements-files }}
+          JAVA_HOME_OUT: ${{ steps.setup.outputs.java-home }}
+          VENV_DIR: ${{ steps.setup.outputs.venv-dir }}
+          PYTHON: ${{ steps.setup.outputs.python }}
+          PYRONAUT: ${{ steps.setup.outputs.pyronaut }}
+          CACHE_HIT: ${{ steps.setup.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$PYRONAUT_VERSION" = "0.0.0.dev0"
+          test "$GRAALPY_VERSION" = "25.3.4.1"
+          test "$GRAALPY_PYENV_VERSION" = "graalpy3.13-25.3.4.1"
+          # The fixture declares [project].dependencies and has a
+          # requirements.txt, so auto-detection must have found both.
+          test "$INSTALL_PROJECT" = "true"
+          test "$REQUIREMENTS_FILES" = "${{ runner.temp }}/demo/requirements.txt"
+          test "$VENV_DIR" = "${{ runner.temp }}/demo/.venv"
+          test "$CACHE_HIT" = "false"
+          test -x "$PYRONAUT"
+          test -x "$PYTHON"
+          test -x "$JAVA_HOME_OUT/bin/java"
+
+      - name: Check the environment the action leaves behind
+        run: |
+          set -euo pipefail
+          # The CLI is on PATH without the workflow spelling out where it lives.
+          pyronaut --version
+          # JAVA_HOME is a GraalVM 25+, which is what `pyronaut setup` requires.
+          "$JAVA_HOME/bin/java" -version 2>&1 | grep -qi graalvm
+          "$JAVA_HOME/bin/java" -version 2>&1 | grep -q 'version "2[5-9]'
+          # pytest is importable from the project environment, on GraalPy.
+          "${{ steps.setup.outputs.python }}" -m pytest --version
+          "${{ steps.setup.outputs.python }}" -c 'import sys; assert "graal" in sys.version.lower(), sys.version'
+          # The project's own dependencies reached the GraalPy environment too:
+          # `six` via the editable install of [project].dependencies, and
+          # `typing_extensions` via requirements.txt. Neither is a pytest
+          # dependency, so importing them proves the action installed them.
+          "${{ steps.setup.outputs.python }}" -c 'import six; print("six", six.__version__)'
+          "${{ steps.setup.outputs.python }}" -c 'import typing_extensions; print("typing_extensions ok")'
+          # `pyronaut setup` wrote its manifest.
+          ls "$HOME/.pyronaut/setup/0.0.0.dev0/"*/setup.json
+          # The runner's own python is untouched, because activate-venv is off.
+          python3 -c 'import sys; assert sys.implementation.name == "cpython", sys.version'
+
+      - name: Set up Pyronaut again
+        id: again
+        uses: ./
+        with:
+          pyronaut-wheel: ${{ runner.temp }}/stub-dist/pyronaut-*.whl
+          project-dir: ${{ runner.temp }}/demo
+          pytest-version: '9.0.3'
+          cache-key-suffix: action-test-${{ github.run_id }}
+
+      - name: Check that the second run came out of the cache
+        env:
+          CACHE_HIT: ${{ steps.again.outputs.cache-hit }}
+          GRAALPY_CACHE_HIT: ${{ steps.again.outputs.graalpy-cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = "true"
+          test "$GRAALPY_CACHE_HIT" = "true"
+
+  action-minimal:
+    name: Action without GraalPy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Build the stub Pyronaut CLI
+        run: |
+          python3 -m pip install --quiet --upgrade build
+          python3 -m build --wheel --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
+
+      - name: Set up Pyronaut
+        id: setup
+        uses: ./
+        with:
+          pyronaut-wheel: ${{ runner.temp }}/stub-dist/pyronaut-*.whl
+          graalpy: 'false'
+          cache: 'false'
+          cache-maven: 'false'
+          maven-repositories: |
+            mavenCentral
+            https://central.sonatype.com/repository/maven-snapshots/
+          native-images-version: '0.0.3'
+
+      - name: Check the settings the action wrote
+        run: |
+          set -euo pipefail
+          cat "$HOME/.pyronaut/settings.toml"
+          grep -q '^\[maven\]$' "$HOME/.pyronaut/settings.toml"
+          grep -q '"mavenCentral",' "$HOME/.pyronaut/settings.toml"
+          grep -q '^\[native-images\]$' "$HOME/.pyronaut/settings.toml"
+          grep -q 'version = "0.0.3"' "$HOME/.pyronaut/settings.toml"
+
+      - name: Check that GraalPy was skipped
+        env:
+          GRAALPY_VERSION: ${{ steps.setup.outputs.graalpy-version }}
+        run: |
+          set -euo pipefail
+          test -z "$GRAALPY_VERSION"
+          test ! -d "$GITHUB_WORKSPACE/.venv"

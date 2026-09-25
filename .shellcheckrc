@@ -1,0 +1,4 @@
+# The scripts print operator-facing messages that quote commands and inputs in
+# backticks, which SC2016 cannot tell apart from an accidental unexpanded
+# expression. Everything that does need expansion uses double quotes.
+disable=SC2016

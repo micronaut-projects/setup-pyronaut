@@ -1,0 +1,20 @@
+# Project fixture for the CI `Action` jobs.
+#
+# `[project].dependencies` and requirements.txt hold small, pure-Python
+# packages that pytest does not already pull in, so asserting they are
+# importable from the GraalPy environment actually proves the action installed
+# them rather than picking them up for free.
+[project]
+name = "demo"
+version = "0.1.0"
+dependencies = ["six"]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
+
+[tool.pyronaut.dependencies]
+runtime = ["io.micronaut:micronaut-http-server-netty"]

@@ -1,0 +1,16 @@
+[project]
+name = "pyronaut"
+version = "0.0.0.dev0"
+description = "Stub Pyronaut CLI used to test micronaut-projects/setup-pyronaut without the real SDK."
+requires-python = ">=3.10"
+
+[project.scripts]
+pyronaut = "pyronaut_stub:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["pyronaut_stub"]

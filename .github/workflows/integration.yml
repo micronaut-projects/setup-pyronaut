@@ -1,0 +1,84 @@
+name: Integration
+
+# Runs the action against the real Pyronaut CLI and a real project, all the way
+# through `pyronaut test`.
+#
+# CI proves the action's own wiring against a stub CLI on every push. This
+# workflow proves the thing CI cannot: that a genuine `pyronaut setup` finds the
+# GraalVM this action set up, that the GraalPy environment it builds satisfies
+# `pyronaut test`, and that the caches hold across jobs. It is manual because it
+# needs a published — or at least reachable — Pyronaut release, and because it
+# downloads a full SDK on a cold cache.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pyronaut-version:
+        description: 'Pyronaut version to install from PyPI, or `latest`.'
+        required: false
+        default: 'latest'
+      graalvm-version:
+        description: 'GraalVM release to set up.'
+        required: false
+        default: '25.3'
+      runner:
+        description: 'Runner to use.'
+        required: false
+        default: 'ubuntu-latest'
+        type: choice
+        options:
+          - ubuntu-latest
+          - macos-latest
+
+permissions:
+  contents: read
+
+jobs:
+  hello-world:
+    name: Hello world on ${{ inputs.runner }}
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Create the hello-world project
+        # The project lives in tests/fixtures/hello-world so it can be read,
+        # edited and linted like normal source rather than as heredocs inside
+        # a workflow. It is copied out of the checkout so the run exercises a
+        # project directory that is not the repository root.
+        run: |
+          set -euo pipefail
+          cp -R tests/fixtures/hello-world "${{ runner.temp }}/hello-world"
+          find "${{ runner.temp }}/hello-world" -type f | sort
+
+      - name: Set up Pyronaut
+        id: setup
+        uses: ./
+        with:
+          pyronaut-version: ${{ inputs.pyronaut-version }}
+          graalvm-version: ${{ inputs.graalvm-version }}
+          project-dir: ${{ runner.temp }}/hello-world
+          run-doctor: 'true'
+          # While releases of micronaut-projects/pyronaut are private, the
+          # native launcher bundles need a token that can read them.
+          github-token: ${{ secrets.PYRONAUT_RELEASE_TOKEN || github.token }}
+
+      - name: Resolve dependencies
+        working-directory: ${{ runner.temp }}/hello-world
+        run: pyronaut install
+
+      - name: Process sources
+        working-directory: ${{ runner.temp }}/hello-world
+        run: pyronaut process
+
+      - name: Run the tests
+        working-directory: ${{ runner.temp }}/hello-world
+        run: pyronaut test
+
+      - name: Upload the test reports
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: pyronaut-reports-${{ inputs.runner }}
+          path: ${{ runner.temp }}/hello-world/__pyronaut__/reports/
+          if-no-files-found: ignore

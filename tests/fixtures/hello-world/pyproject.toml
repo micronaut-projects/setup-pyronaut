@@ -1,0 +1,30 @@
+# The minimal Pyronaut application from the Pyronaut README, used by the
+# integration workflow to drive the real CLI end to end.
+[project]
+name = "hello-pyronaut"
+version = "0.1.0"
+dynamic = ["scripts"]
+
+[build-system]
+requires = ["setuptools", "wheel", "tomli"]
+build-backend = "setuptools.build_meta"
+
+[tool.pyronaut]
+repositories = [
+  "mavenCentral",
+  "https://central.sonatype.com/repository/maven-snapshots/"
+]
+
+[tool.pyronaut.dependencies]
+runtime = [
+  "io.micronaut:micronaut-http-server-netty",
+  "io.micronaut:micronaut-json-core",
+  "io.micronaut:micronaut-jackson-databind",
+  "ch.qos.logback:logback-classic"
+]
+build = []
+test = [
+  "io.micronaut.pyronaut:micronaut-pyronaut-pytest",
+  "io.micronaut.test:micronaut-test-junit5",
+  "io.micronaut.pyronaut:micronaut-pyronaut-requests"
+]
