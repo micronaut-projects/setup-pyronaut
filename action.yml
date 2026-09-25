@@ -283,7 +283,7 @@ runs:
     - name: Restore GraalPy cache
       id: graalpy-cache-restore
       if: steps.preflight.outputs.graalpy == 'true' && steps.preflight.outputs.cache == 'true'
-      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ${{ steps.preflight.outputs.pyenv-root }}
@@ -311,7 +311,7 @@ runs:
       if: >-
         steps.preflight.outputs.graalpy == 'true' && steps.preflight.outputs.cache == 'true'
         && steps.graalpy-cache-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           ${{ steps.preflight.outputs.pyenv-root }}
@@ -343,7 +343,7 @@ runs:
     - name: Restore Pyronaut SDK cache
       id: sdk-cache-restore
       if: steps.preflight.outputs.cache == 'true'
-      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.preflight.outputs.pyronaut-home }}
         key: ${{ steps.sdk-cache-key.outputs.cache-key }}
@@ -351,7 +351,7 @@ runs:
 
     - name: Cache the Maven local repository
       if: steps.preflight.outputs.cache-maven == 'true'
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.preflight.outputs.local-repository }}
         key: ${{ steps.sdk-cache-key.outputs.maven-cache-key }}
@@ -379,7 +379,7 @@ runs:
       if: >-
         steps.preflight.outputs.cache == 'true' && steps.preflight.outputs.run-setup == 'true'
         && steps.sdk-cache-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.preflight.outputs.pyronaut-home }}
         key: ${{ steps.sdk-cache-key.outputs.cache-key }}
