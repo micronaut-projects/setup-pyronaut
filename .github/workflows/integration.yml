@@ -59,9 +59,6 @@ jobs:
           graalvm-version: ${{ inputs.graalvm-version }}
           project-dir: ${{ runner.temp }}/hello-world
           run-doctor: 'true'
-          # While releases of micronaut-projects/pyronaut are private, the
-          # native launcher bundles need a token that can read them.
-          github-token: ${{ secrets.PYRONAUT_RELEASE_TOKEN || github.token }}
 
       - name: Resolve dependencies
         working-directory: ${{ runner.temp }}/hello-world

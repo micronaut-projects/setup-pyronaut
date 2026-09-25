@@ -48,9 +48,26 @@ python="$(find_python)" ||
   fail "No CPython ${MINIMUM_PYTHON}+ interpreter found on PATH. Add actions/setup-python before this action."
 printf 'CLI interpreter: %s (%s)\n' "$python" "$("$python" --version 2>&1)"
 
+# Print the tag of the newest non-draft release of a repository. The
+# `/releases/latest` endpoint skips prereleases, and every Pyronaut release so
+# far is one, so take the head of the list instead; it is ordered newest first.
+latest_release_tag() {
+  local url="${GITHUB_API_URL:-https://api.github.com}/repos/$1/releases?per_page=20"
+  set -- -fsSL -H 'Accept: application/vnd.github+json'
+  if [ -n "${GH_TOKEN:-}" ]; then
+    set -- "$@" -H "Authorization: Bearer $GH_TOKEN"
+  fi
+  curl "$@" "$url" | "$python" -c '
+import json, sys
+tags = [r["tag_name"] for r in json.load(sys.stdin) if not r.get("draft")]
+print(tags[0] if tags else "")
+'
+}
+
 # Resolve what to install before touching the virtual environment, so a bad
 # input fails before anything is written.
 requirement=""
+find_links=""
 if [ -n "${INPUT_PYRONAUT_WHEEL:-}" ]; then
   wheel="$INPUT_PYRONAUT_WHEEL"
   case "$wheel" in
@@ -73,21 +90,26 @@ if [ -n "${INPUT_PYRONAUT_WHEEL:-}" ]; then
   esac
   printf 'Installing Pyronaut from wheel: %s\n' "$requirement"
 else
-  # Pyronaut is not on PyPI; its wheel is attached to each GitHub release, so
-  # fetch it from there with the same token `pyronaut setup` uses.
+  # Pyronaut is not on PyPI; its wheel is attached to each GitHub release.
+  # pip reads the release's asset list as a `--find-links` page, so it
+  # resolves the wheel itself.
   version="$(printf '%s' "${INPUT_PYRONAUT_VERSION:-latest}" | tr -d '[:space:]')"
+  repository="${INPUT_PYRONAUT_REPOSITORY:-micronaut-projects/pyronaut}"
   case "$version" in
+    '' | latest)
+      tag="$(latest_release_tag "$repository")" ||
+        fail "Could not list the releases of $repository"
+      [ -n "$tag" ] || fail "$repository has no releases"
+      ;;
     '='* | '>'* | '<'* | '!'* | '~'*)
       fail "pyronaut-version must be \`latest\` or an exact version such as 0.0.4, not a specifier: $version"
       ;;
+    v*) tag="$version" ;;
+    *) tag="v$version" ;;
   esac
-  repository="${INPUT_PYRONAUT_REPOSITORY:-micronaut-projects/pyronaut}"
-  wheel_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/pyronaut-wheel"
-  rm -rf "$wheel_dir"
-  requirement="$("$python" "$(dirname "$0")/release-wheel.py" \
-    --repository "$repository" --version "${version:-latest}" --dest "$wheel_dir")" ||
-    fail "Could not download the Pyronaut wheel from releases of $repository"
-  printf 'Installing Pyronaut from GitHub release wheel: %s\n' "$requirement"
+  requirement="pyronaut==${tag#v}"
+  find_links="${GITHUB_SERVER_URL:-https://github.com}/$repository/releases/expanded_assets/$tag"
+  printf 'Installing Pyronaut from %s\n' "$find_links"
 fi
 
 group "Creating CLI environment at $CLI_VENV_DIR"
@@ -98,7 +120,14 @@ venv_python="$CLI_VENV_DIR/bin/python"
 endgroup
 
 group "Installing $requirement"
-"$venv_python" -m pip install --disable-pip-version-check --upgrade "$requirement"
+if [ -n "$find_links" ]; then
+  # `--no-index` keeps pip off PyPI; the wheel declares no dependencies.
+  "$venv_python" -m pip install --disable-pip-version-check --upgrade \
+    --no-index --find-links "$find_links" "$requirement" ||
+    fail "pip could not install $requirement from $find_links"
+else
+  "$venv_python" -m pip install --disable-pip-version-check --upgrade "$requirement"
+fi
 endgroup
 
 pyronaut="$CLI_VENV_DIR/bin/pyronaut"
