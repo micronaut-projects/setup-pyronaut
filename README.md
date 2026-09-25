@@ -315,9 +315,9 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 action fails in its first step there rather than partway through a download.
 
 **`github-token` and private releases.** The action downloads the Pyronaut wheel, and Pyronaut
-downloads its native launcher bundles, from GitHub releases of `micronaut-projects/pyronaut`. The default `${{ github.token }}` is scoped to
-the repository running the workflow, so while that repository is private you need a token with
-`contents: read` on it:
+downloads its native launcher bundles, from GitHub releases of `micronaut-projects/pyronaut`.
+The default `${{ github.token }}` is scoped to the repository running the workflow, so while that
+repository is private you need a token with `contents: read` on it:
 
 ```yaml
 with:
