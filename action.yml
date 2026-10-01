@@ -283,6 +283,7 @@ runs:
         INPUT_VENV_DIR: ${{ inputs.venv-dir }}
         PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
         CLI_GRAALPY_VERSION: ${{ steps.cli.outputs.graalpy-version }}
+        CLI_GRAALPY_INTERPRETER: ${{ steps.cli.outputs.graalpy-interpreter }}
         CACHE_KEY_BASE: ${{ steps.preflight.outputs.cache-key-base }}
       run: '"${{ github.action_path }}/scripts/resolve-graalpy.sh"'
 

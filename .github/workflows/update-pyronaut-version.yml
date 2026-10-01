@@ -1,0 +1,98 @@
+name: Update Pyronaut version
+
+# Keeps the default of the `pyronaut-version` input on the newest Pyronaut
+# release, by opening a pull request whenever it falls behind.
+#
+# The Pyronaut release workflow sends a `pyronaut-release` repository dispatch
+# with the new version as soon as a release is published. The daily schedule is
+# the fallback for a dispatch that never arrived, and a manual run can target a
+# specific version.
+#
+# Releases of micronaut-projects/pyronaut are private for now, and a pull
+# request opened with the default job token would not trigger CI, so both the
+# lookup and the pull request use the GH_TOKEN secret.
+
+on:
+  repository_dispatch:
+    types: [pyronaut-release]
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Pyronaut version to default to, for example 0.0.4. Leave empty for the newest release.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-pyronaut-version
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Update the default Pyronaut version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: Resolve the Pyronaut version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          REQUESTED: ${{ github.event.client_payload.version || inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${REQUESTED#v}"
+          if [ -z "$version" ]; then
+            # `/releases/latest` skips prereleases, and every Pyronaut release so
+            # far is one, so take the newest non-draft release from the list.
+            version="$(gh api '/repos/micronaut-projects/pyronaut/releases?per_page=20' \
+              --jq '[.[] | select(.draft | not)][0].tag_name // ""')"
+            version="${version#v}"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+            echo "::error::Not a Pyronaut release version: '${version}'"
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "Pyronaut version: $version"
+
+      - name: Update the default
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Rewrite only the `default:` of the `pyronaut-version` input.
+          awk -v version="$VERSION" '
+            /^  [a-z0-9-]+:[[:space:]]*$/ { in_input = ($1 == "pyronaut-version:") }
+            in_input && /^    default:/ { sub(/default:.*/, "default: '\''" version "'\''"); in_input = 0; updated = 1 }
+            { print }
+            END { if (!updated) exit 1 }
+          ' action.yml >action.yml.tmp
+          mv action.yml.tmp action.yml
+          # Keep the inputs table in the README in step with action.yml.
+          sed -E -i "s/^(\| \`pyronaut-version\` \| )\`[^\`]*\`/\1\`${VERSION}\`/" README.md
+          grep -q "^    default: '${VERSION}'$" action.yml
+          grep -q "^| \`pyronaut-version\` | \`${VERSION}\` |" README.md
+          git diff
+
+      - name: Open a pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          branch: pyronaut-${{ steps.version.outputs.version }}
+          base: main
+          commit-message: Default to Pyronaut ${{ steps.version.outputs.version }}
+          title: Default to Pyronaut ${{ steps.version.outputs.version }}
+          body: |
+            Updates the default `pyronaut-version` to [${{ steps.version.outputs.version }}](https://github.com/micronaut-projects/pyronaut/releases/tag/v${{ steps.version.outputs.version }}).
+          committer: micronaut-build <${{ secrets.MICRONAUT_BUILD_EMAIL }}>
+          author: micronaut-build <${{ secrets.MICRONAUT_BUILD_EMAIL }}>
+          labels: dependencies
+          delete-branch: true

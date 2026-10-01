@@ -25,7 +25,11 @@ from pathlib import Path
 PYRONAUT_VERSION = "0.0.0.dev0"
 MICRONAUT_CORE_VERSION = "5.2.3"
 MICRONAUT_PLATFORM_VERSION = "5.1.0"
-GRAALPY_VERSION = "25.3.4.1"
+GRAALPY_VERSION = "25.4.4.1.1"
+# The pyenv identifier, which the real CLI reports separately because it does
+# not track the GraalPy version: 0.0.7 bundles GraalPy 25.4.4.1.1 but its
+# interpreter is graalpy3.13-25.4.4.
+GRAALPY_INTERPRETER = "graalpy3.13-25.4.4"
 NATIVE_IMAGE_JDK = "25"
 
 USAGE = "Usage: pyronaut [--version] <setup|doctor> [args...]\n"
@@ -44,6 +48,7 @@ def _print_version() -> int:
     print(f"Micronaut Core: {MICRONAUT_CORE_VERSION}")
     print(f"Micronaut Platform: {MICRONAUT_PLATFORM_VERSION}")
     print(f"GraalPy: {GRAALPY_VERSION}")
+    print(f"GraalPy Interpreter: {GRAALPY_INTERPRETER}")
     print(f"Native Image JDK: {NATIVE_IMAGE_JDK}")
     return 0
 

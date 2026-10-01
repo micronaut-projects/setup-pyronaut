@@ -257,7 +257,7 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 | Input | Default | Description |
 | --- | --- | --- |
 | `graalpy` | `true` | Install GraalPy and create the project environment. Required for `pyronaut test`. |
-| `graalpy-version` | from the CLI | A pyenv identifier such as `graalpy3.13-25.3.4.1`, or a bare version such as `25.3.4.1`. Defaults to the GraalPy the installed CLI reports. |
+| `graalpy-version` | from the CLI | A pyenv identifier such as `graalpy3.13-25.4.4`, or a bare version such as `25.4.4`. Defaults to the interpreter the installed CLI names — see [Notes](#notes). |
 | `graalpy-python-version` | `3.13` | Python feature version used to build a pyenv identifier from a bare GraalPy version. |
 | `pytest-version` | `latest` | `latest`, an exact version, or a PEP 440 specifier. |
 | `python-packages` | | Extra pip requirements for the GraalPy environment, one per line. |
@@ -333,6 +333,12 @@ checks in or pre-creates that directory, point `venv-dir` somewhere else.
 with `activate-venv`, so other tooling in the job keeps the Python it expects. Pyronaut finds the
 environment through the project directory, not through `PATH`.
 
+**The GraalPy interpreter comes from the CLI, not from its version.** `pyronaut --version` reports
+both a `GraalPy` version and a `GraalPy Interpreter`, and they are not the same thing: Pyronaut
+0.0.7 bundles GraalPy `25.4.4.1.1` but its interpreter is `graalpy3.13-25.4.4`, and only the latter
+is a pyenv identifier. The action uses the interpreter the CLI names, and falls back to deriving one
+from the version for CLIs old enough not to report it. Setting `graalpy-version` overrides both.
+
 **`PYENV_VERSION` is exported.** The action sets `PYENV_ROOT` and `PYENV_VERSION` so
 `pyronaut doctor` agrees with what was installed, but deliberately keeps pyenv's shims off `PATH`.
 
@@ -369,6 +375,9 @@ CI runs on every push: shellcheck, shfmt, actionlint, the unit suite on Linux an
 action itself end to end — including a second invocation that has to come back with `cache-hit` set.
 `.github/workflows/integration.yml` is the manual counterpart: it runs the action against the real
 Pyronaut CLI and a real hello-world project, all the way through `pyronaut test`.
+`.github/workflows/update-pyronaut-version.yml` opens a pull request moving the `pyronaut-version`
+default to each new Pyronaut release. The Pyronaut release workflow triggers it with a
+`pyronaut-release` repository dispatch, and a daily run catches any dispatch that was missed.
 
 Test fixtures are real files under `tests/fixtures`, not heredocs inside the workflows, so they can
 be read and edited like ordinary source: `hello-world` is the minimal application from the Pyronaut

@@ -75,9 +75,14 @@ jobs:
       # report and an idempotent `setup` — so the composite wiring, the GraalVM
       # and GraalPy installs and the caching can all be exercised for real.
       - name: Build the stub Pyronaut CLI
+        # In its own venv: the macOS runner's Python is Homebrew's, which is
+        # PEP 668 externally-managed and refuses `pip install` outright.
         run: |
-          python3 -m pip install --quiet --upgrade build
-          python3 -m build --wheel --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
+          set -euo pipefail
+          python3 -m venv "${{ runner.temp }}/build-venv"
+          "${{ runner.temp }}/build-venv/bin/python" -m pip install --quiet --upgrade build
+          "${{ runner.temp }}/build-venv/bin/python" -m build --wheel \
+            --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
 
       - name: Create a project fixture
         run: |
@@ -110,8 +115,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$PYRONAUT_VERSION" = "0.0.0.dev0"
-          test "$GRAALPY_VERSION" = "25.3.4.1"
-          test "$GRAALPY_PYENV_VERSION" = "graalpy3.13-25.3.4.1"
+          # The stub reports these two separately, as the real CLI does: the
+          # GraalPy version is not the pyenv identifier.
+          test "$GRAALPY_VERSION" = "25.4.4.1.1"
+          test "$GRAALPY_PYENV_VERSION" = "graalpy3.13-25.4.4"
           # The fixture declares [project].dependencies and has a
           # requirements.txt, so auto-detection must have found both.
           test "$INSTALL_PROJECT" = "true"
@@ -170,9 +177,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build the stub Pyronaut CLI
+        # In its own venv: the macOS runner's Python is Homebrew's, which is
+        # PEP 668 externally-managed and refuses `pip install` outright.
         run: |
-          python3 -m pip install --quiet --upgrade build
-          python3 -m build --wheel --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
+          set -euo pipefail
+          python3 -m venv "${{ runner.temp }}/build-venv"
+          "${{ runner.temp }}/build-venv/bin/python" -m pip install --quiet --upgrade build
+          "${{ runner.temp }}/build-venv/bin/python" -m build --wheel \
+            --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
 
       - name: Set up Pyronaut
         id: setup
