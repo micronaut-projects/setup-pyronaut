@@ -38,7 +38,11 @@ prepend_path() {
 
 random_token() {
   if [ -r /dev/urandom ]; then
-    LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 16 || true
+    # A fixed-size read, hexdumped. Feeding `tr` straight from /dev/urandom
+    # into a `head` makes `head` exit first and leaves `tr` writing to a closed
+    # pipe, which printed "tr: write error: Broken pipe" into the log of every
+    # step that set an output.
+    head -c 8 /dev/urandom | od -An -tx1 | LC_ALL=C tr -d ' \n'
   else
     printf '%s%s' "$$" "${RANDOM:-0}"
   fi
