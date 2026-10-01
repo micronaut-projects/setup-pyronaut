@@ -13,16 +13,33 @@ set -euo pipefail
 
 readonly MINIMUM_PYTHON="3.10"
 
+# Never build the environment with an interpreter that lives inside it.
+#
+# Using the action twice in one job leaves the first run's CLI venv on PATH,
+# and that venv supplies `python`, `python3` and `python3.X` alike — so every
+# name resolves into the directory this run is about to `rm -rf`, and `-m venv`
+# then dies on a deleted interpreter. Skipping the offending PATH entries
+# rather than the names is what finds the system interpreter behind them.
 find_python() {
-  local candidate
-  for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
-    command -v "$candidate" >/dev/null 2>&1 || continue
-    # GraalPy would satisfy the version check but is not what the orchestrator
-    # should run on, so require CPython explicitly.
-    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.implementation.name == "cpython" and sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
-      command -v "$candidate"
-      return 0
-    fi
+  local name dir candidate paths
+  paths="$(printf '%s' "$PATH" | tr ':' '\n')"
+  for name in python3.13 python3.12 python3.11 python3.10 python3 python; do
+    while IFS= read -r dir; do
+      [ -n "$dir" ] || continue
+      case "$dir" in
+        "$CLI_VENV_DIR" | "$CLI_VENV_DIR"/*) continue ;;
+      esac
+      candidate="$dir/$name"
+      [ -x "$candidate" ] || continue
+      # GraalPy would satisfy the version check but is not what the
+      # orchestrator should run on, so require CPython explicitly.
+      if "$candidate" -c 'import sys; raise SystemExit(0 if sys.implementation.name == "cpython" and sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+        printf '%s' "$candidate"
+        return 0
+      fi
+    done <<EOF
+$paths
+EOF
   done
   return 1
 }
@@ -87,6 +104,11 @@ printf '%s\n' "$report"
 
 pyronaut_version="$(version_field "$report" "Pyronaut")"
 graalpy_version="$(version_field "$report" "GraalPy")"
+# Newer CLIs name the pyenv interpreter outright. That matters because the
+# GraalPy version and the interpreter's version suffix have diverged: 0.0.7
+# reports GraalPy 25.4.4.1.1 but its interpreter is graalpy3.13-25.4.4, and
+# only the latter is a pyenv identifier.
+graalpy_interpreter="$(version_field "$report" "GraalPy Interpreter")"
 micronaut_core_version="$(version_field "$report" "Micronaut Core")"
 native_image_jdk="$(version_field "$report" "Native Image JDK")"
 
@@ -103,5 +125,6 @@ prepend_path "$CLI_VENV_DIR/bin"
 set_output "pyronaut" "$pyronaut"
 set_output "pyronaut-version" "$pyronaut_version"
 set_output "graalpy-version" "$graalpy_version"
+set_output "graalpy-interpreter" "$graalpy_interpreter"
 set_output "micronaut-core-version" "$micronaut_core_version"
 set_output "native-image-jdk" "$native_image_jdk"

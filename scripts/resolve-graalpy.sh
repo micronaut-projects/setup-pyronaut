@@ -27,26 +27,48 @@ if ! is_true "${INPUT_GRAALPY:-true}"; then
   exit 0
 fi
 
+# Which GraalPy, in order of authority:
+#
+#   1. the graalpy-version input, when the workflow sets one;
+#   2. the interpreter the installed CLI names, which is already a pyenv
+#      identifier and needs no guessing;
+#   3. the CLI's GraalPy version, derived into an identifier for CLIs old
+#      enough not to report the interpreter.
+#
+# (2) exists because deriving (3) is not reliable: Pyronaut 0.0.7 reports
+# GraalPy 25.4.4.1.1 while its interpreter is graalpy3.13-25.4.4, and only the
+# latter is a pyenv identifier. The two happened to match up to 0.0.3, which is
+# why deriving looked sufficient.
 requested="$(printf '%s' "${INPUT_GRAALPY_VERSION:-}" | tr -d '[:space:]')"
-if [ -z "$requested" ]; then
-  requested="$(printf '%s' "${CLI_GRAALPY_VERSION:-}" | tr -d '[:space:]')"
-  [ -n "$requested" ] || fail \
-    "Could not determine which GraalPy to install. Set the 'graalpy-version' input, or use a Pyronaut CLI that reports its bundled GraalPy version."
-  printf 'Using the GraalPy version bundled with the Pyronaut CLI: %s\n' "$requested"
-fi
+cli_interpreter="$(printf '%s' "${CLI_GRAALPY_INTERPRETER:-}" | tr -d '[:space:]')"
+cli_version="$(printf '%s' "${CLI_GRAALPY_VERSION:-}" | tr -d '[:space:]')"
 
-case "$requested" in
-  graalpy*)
-    # Already a pyenv identifier, e.g. `graalpy3.13-25.3.4.1`.
-    pyenv_version="$requested"
-    graalpy_version="${requested##*-}"
-    ;;
-  *)
-    python_version="$(printf '%s' "${INPUT_GRAALPY_PYTHON_VERSION:-3.13}" | tr -d '[:space:]')"
-    pyenv_version="graalpy${python_version}-${requested}"
-    graalpy_version="$requested"
-    ;;
-esac
+if [ -n "$requested" ]; then
+  case "$requested" in
+    graalpy*)
+      # Already a pyenv identifier, e.g. `graalpy3.13-25.3.4.1`.
+      pyenv_version="$requested"
+      graalpy_version="${requested##*-}"
+      ;;
+    *)
+      python_version="$(printf '%s' "${INPUT_GRAALPY_PYTHON_VERSION:-3.13}" | tr -d '[:space:]')"
+      pyenv_version="graalpy${python_version}-${requested}"
+      graalpy_version="$requested"
+      ;;
+  esac
+elif [ -n "$cli_interpreter" ]; then
+  pyenv_version="$cli_interpreter"
+  # The CLI's GraalPy field is the more precise version, when it reported one.
+  graalpy_version="${cli_version:-${cli_interpreter##*-}}"
+  printf 'Using the GraalPy interpreter the Pyronaut CLI names: %s\n' "$pyenv_version"
+elif [ -n "$cli_version" ]; then
+  python_version="$(printf '%s' "${INPUT_GRAALPY_PYTHON_VERSION:-3.13}" | tr -d '[:space:]')"
+  pyenv_version="graalpy${python_version}-${cli_version}"
+  graalpy_version="$cli_version"
+  printf 'Deriving the GraalPy interpreter from the version the CLI reports: %s\n' "$pyenv_version"
+else
+  fail "Could not determine which GraalPy to install. Set the 'graalpy-version' input, or use a Pyronaut CLI that reports its bundled GraalPy interpreter."
+fi
 
 pytest_version="$(printf '%s' "${INPUT_PYTEST_VERSION:-latest}" | tr -d '[:space:]')"
 case "$pytest_version" in

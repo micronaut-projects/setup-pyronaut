@@ -75,9 +75,14 @@ jobs:
       # report and an idempotent `setup` — so the composite wiring, the GraalVM
       # and GraalPy installs and the caching can all be exercised for real.
       - name: Build the stub Pyronaut CLI
+        # In its own venv: the macOS runner's Python is Homebrew's, which is
+        # PEP 668 externally-managed and refuses `pip install` outright.
         run: |
-          python3 -m pip install --quiet --upgrade build
-          python3 -m build --wheel --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
+          set -euo pipefail
+          python3 -m venv "${{ runner.temp }}/build-venv"
+          "${{ runner.temp }}/build-venv/bin/python" -m pip install --quiet --upgrade build
+          "${{ runner.temp }}/build-venv/bin/python" -m build --wheel \
+            --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
 
       - name: Create a project fixture
         run: |
@@ -170,9 +175,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build the stub Pyronaut CLI
+        # In its own venv: the macOS runner's Python is Homebrew's, which is
+        # PEP 668 externally-managed and refuses `pip install` outright.
         run: |
-          python3 -m pip install --quiet --upgrade build
-          python3 -m build --wheel --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
+          set -euo pipefail
+          python3 -m venv "${{ runner.temp }}/build-venv"
+          "${{ runner.temp }}/build-venv/bin/python" -m pip install --quiet --upgrade build
+          "${{ runner.temp }}/build-venv/bin/python" -m build --wheel \
+            --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
 
       - name: Set up Pyronaut
         id: setup

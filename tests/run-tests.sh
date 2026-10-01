@@ -366,6 +366,7 @@ run_resolve_graalpy() {
     INPUT_VENV_DIR="${INPUT_VENV_DIR:-}" \
     PROJECT_DIR="${PROJECT_DIR:-$WORK/project}" \
     CLI_GRAALPY_VERSION="${CLI_GRAALPY_VERSION:-}" \
+    CLI_GRAALPY_INTERPRETER="${CLI_GRAALPY_INTERPRETER:-}" \
     CACHE_KEY_BASE="${CACHE_KEY_BASE:-base-Linux-x64}" \
     "$SCRIPTS/resolve-graalpy.sh" 2>&1
 }
@@ -447,15 +448,6 @@ graalpy_can_be_disabled() {
   check "exits 0 without a version" "$?" "0"
   check "reports no pyenv version" "$(output pyenv-version)" ""
   check "still reports the venv directory" "$(output venv-dir)" "$WORK/project/.venv"
-}
-
-graalpy_requires_a_version() {
-  mkdir -p "$WORK/project"
-  local out status
-  out="$(run_resolve_graalpy)"
-  status=$?
-  check "fails when nothing supplies a version" "$status" "1"
-  check_contains "names the input" "$out" "'graalpy-version' input"
 }
 
 # -- setup-graalpy -----------------------------------------------------------
@@ -570,6 +562,57 @@ setup_reports_a_failure() {
   check "propagates the failure" "$status" "1"
   check_contains "points at the doctor" "$out" "run-doctor: true"
   check_contains "points at the token" "$out" "github-token"
+}
+
+# -- the GraalPy interpreter the CLI names -----------------------------------
+#
+# The GraalPy version and the pyenv interpreter do not track each other:
+# Pyronaut 0.0.7 reports GraalPy 25.4.4.1.1 but its interpreter is
+# graalpy3.13-25.4.4, and only the latter is a pyenv identifier. They matched up
+# to 0.0.3, which is why deriving one from the other looked sufficient.
+
+interpreter_from_the_cli_is_preferred() {
+  mkdir -p "$WORK/project"
+  CLI_GRAALPY_VERSION=25.4.4.1.1 CLI_GRAALPY_INTERPRETER=graalpy3.13-25.4.4 \
+    run_resolve_graalpy >/dev/null
+  check "uses the identifier the CLI names" "$(output pyenv-version)" "graalpy3.13-25.4.4"
+  check "keeps the CLI's more precise version" "$(output graalpy-version)" "25.4.4.1.1"
+}
+
+interpreter_falls_back_to_deriving() {
+  mkdir -p "$WORK/project"
+  # A CLI old enough not to report the interpreter, e.g. 0.0.3.
+  CLI_GRAALPY_VERSION=25.3.4.1 run_resolve_graalpy >/dev/null
+  check "derives it from the version" "$(output pyenv-version)" "graalpy3.13-25.3.4.1"
+  check "reports that version" "$(output graalpy-version)" "25.3.4.1"
+}
+
+interpreter_input_overrides_the_cli() {
+  mkdir -p "$WORK/project"
+  INPUT_GRAALPY_VERSION=graalpy3.13-25.3.4.1 CLI_GRAALPY_VERSION=25.4.4.1.1 \
+    CLI_GRAALPY_INTERPRETER=graalpy3.13-25.4.4 run_resolve_graalpy >/dev/null
+  check "the input wins" "$(output pyenv-version)" "graalpy3.13-25.3.4.1"
+
+  : >"$GITHUB_OUTPUT"
+  INPUT_GRAALPY_VERSION=25.3.4.1 CLI_GRAALPY_INTERPRETER=graalpy3.13-25.4.4 \
+    run_resolve_graalpy >/dev/null
+  check "a bare input version is still derived" "$(output pyenv-version)" "graalpy3.13-25.3.4.1"
+}
+
+interpreter_without_a_version_still_works() {
+  mkdir -p "$WORK/project"
+  CLI_GRAALPY_INTERPRETER=graalpy3.13-25.4.4 run_resolve_graalpy >/dev/null
+  check "uses the identifier" "$(output pyenv-version)" "graalpy3.13-25.4.4"
+  check "takes the version from its suffix" "$(output graalpy-version)" "25.4.4"
+}
+
+interpreter_requires_something_to_go_on() {
+  mkdir -p "$WORK/project"
+  local out status
+  out="$(run_resolve_graalpy)"
+  status=$?
+  check "fails when the CLI reports neither" "$status" "1"
+  check_contains "names the input" "$out" "'graalpy-version' input"
 }
 
 # -- project dependencies ----------------------------------------------------
@@ -872,6 +915,36 @@ cli_rejects_an_ambiguous_wheel() {
   check_contains "says how many matched" "$out" "matched 2 files"
 }
 
+cli_ignores_an_interpreter_inside_the_target_venv() {
+  # What a second use of the action in one job looks like: the first run left
+  # its CLI venv on PATH, so `python3.12` resolves inside the directory this
+  # run is about to delete and recreate. Picking it up meant `rm -rf` deleted
+  # the interpreter mid-flight and `-m venv` died with exit 127.
+  mkdir -p "$WORK/cli/bin"
+  # A real venv's bin carries every name the probe tries, so stub them all —
+  # otherwise whichever one this machine happens not to have would let the
+  # probe fall through to the system interpreter and the test would pass even
+  # with the guard removed.
+  local name
+  for name in python3.13 python3.12 python3.11 python3.10 python3 python; do
+    cat >"$WORK/cli/bin/$name" <<'STALE'
+#!/usr/bin/env bash
+# Answers the CPython probe exactly as the real venv interpreter would.
+exit 0
+STALE
+    chmod +x "$WORK/cli/bin/$name"
+  done
+
+  local out
+  out="$(PATH="$WORK/cli/bin:$PATH" INPUT_PYRONAUT_WHEEL="$WORK/nope-*.whl" \
+    CLI_VENV_DIR="$WORK/cli" "$SCRIPTS/install-cli.sh" 2>&1)"
+  # It fails on the bogus wheel, which is expected; what matters is which
+  # interpreter it chose before getting there.
+  check_contains "reports an interpreter" "$out" "CLI interpreter:"
+  check "does not choose one inside the target venv" \
+    "$(printf '%s' "$out" | grep -c "CLI interpreter: $WORK/cli/bin")" "0"
+}
+
 # -- summary -----------------------------------------------------------------
 
 summary_reports_cache_state() {
@@ -921,7 +994,6 @@ test_case "resolve-graalpy: pins pytest" graalpy_pins_pytest
 test_case "resolve-graalpy: the cache key tracks requirements" graalpy_cache_key_tracks_requirements
 test_case "resolve-graalpy: the marker lists every requirement" graalpy_marker_lists_every_requirement
 test_case "resolve-graalpy: can be disabled" graalpy_can_be_disabled
-test_case "resolve-graalpy: requires a version" graalpy_requires_a_version
 
 test_case "setup-graalpy: reuses a matching environment" graalpy_reuses_a_matching_environment
 test_case "setup-graalpy: rebuilds on a marker mismatch" graalpy_rebuilds_on_a_marker_mismatch
@@ -935,6 +1007,12 @@ test_case "run-setup: appends extra arguments" setup_appends_extra_arguments
 test_case "run-setup: lets the workflow keep progress" setup_lets_the_workflow_keep_progress
 test_case "run-setup: warns about a packed argument" setup_warns_about_a_packed_argument
 test_case "run-setup: reports a failure" setup_reports_a_failure
+
+test_case "interpreter: the CLI's identifier is preferred" interpreter_from_the_cli_is_preferred
+test_case "interpreter: falls back to deriving" interpreter_falls_back_to_deriving
+test_case "interpreter: the input overrides the CLI" interpreter_input_overrides_the_cli
+test_case "interpreter: works without a version" interpreter_without_a_version_still_works
+test_case "interpreter: requires something to go on" interpreter_requires_something_to_go_on
 
 test_case "deps: auto-detects declared dependencies" deps_auto_detects_declared_dependencies
 test_case "deps: auto skips a project without dependencies" deps_auto_skips_a_project_without_dependencies
@@ -963,6 +1041,7 @@ test_case "sdk-cache-key: tracks the project" sdk_cache_key_tracks_the_project
 
 test_case "install-cli: rejects an unmatched wheel" cli_rejects_an_unmatched_wheel
 test_case "install-cli: rejects an ambiguous wheel" cli_rejects_an_ambiguous_wheel
+test_case "install-cli: ignores an interpreter inside the target venv" cli_ignores_an_interpreter_inside_the_target_venv
 
 test_case "summary: reports the cache state" summary_reports_cache_state
 test_case "summary: handles a skipped GraalPy" summary_handles_a_skipped_graalpy
