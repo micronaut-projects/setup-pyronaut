@@ -20,6 +20,13 @@ failed=0
 
 begin() {
   WORK="$(mktemp -d)"
+  # Canonicalize it, because the scripts do. On macOS `mktemp -d` returns a
+  # path under /var, which is a symlink to /private/var, while `absolute_path`
+  # resolves with `pwd -P` and yields the /private/var form. Comparing a
+  # script's output against the raw path would fail there for a difference
+  # that is not a difference — and the canonicalization is deliberate, since
+  # Pyronaut records these paths in its setup manifest and re-validates them.
+  WORK="$(cd "$WORK" && pwd -P)"
   export GITHUB_OUTPUT="$WORK/outputs"
   export GITHUB_ENV="$WORK/env"
   export GITHUB_PATH="$WORK/path"

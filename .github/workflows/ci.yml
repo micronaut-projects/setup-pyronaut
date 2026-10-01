@@ -115,8 +115,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$PYRONAUT_VERSION" = "0.0.0.dev0"
-          test "$GRAALPY_VERSION" = "25.3.4.1"
-          test "$GRAALPY_PYENV_VERSION" = "graalpy3.13-25.3.4.1"
+          # The stub reports these two separately, as the real CLI does: the
+          # GraalPy version is not the pyenv identifier.
+          test "$GRAALPY_VERSION" = "25.4.4.1.1"
+          test "$GRAALPY_PYENV_VERSION" = "graalpy3.13-25.4.4"
           # The fixture declares [project].dependencies and has a
           # requirements.txt, so auto-detection must have found both.
           test "$INSTALL_PROJECT" = "true"
