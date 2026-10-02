@@ -48,10 +48,12 @@ inputs:
     default: '25'
   graalvm-version:
     description: >-
-      GraalVM release passed to `graalvm/setup-graalvm` (for example `25.3`, `latest`, or `dev`).
-      Leave empty to let that action pick the default for the distribution.
+      GraalVM release passed to `graalvm/setup-graalvm` (for example `25.4`, `latest`, or `dev`).
+      Leave empty to let that action pick the default for the distribution. The default tracks
+      the GraalVM that the GraalPy bundled with the current Pyronaut CLI was built against:
+      the two have to match, and a mismatch does not announce itself as a version error.
     required: false
-    default: '25.3'
+    default: '25.4'
   graalvm-distribution:
     description: 'GraalVM distribution passed to `graalvm/setup-graalvm` (`graalvm` or `graalvm-community`).'
     required: false
