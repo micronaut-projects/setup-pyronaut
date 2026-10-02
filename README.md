@@ -42,8 +42,10 @@ The action runs these steps, in order:
    and then verifies that `JAVA_HOME` really is a GraalVM 25 or later. Pyronaut's own toolchain
    discovery takes `JAVA_HOME` first when it satisfies the requested toolchain, so this is what
    stops `pyronaut setup` from downloading a second GraalVM of its own.
-3. **Pyronaut CLI.** Installs the wheel into a dedicated CPython virtual environment and puts
-   `pyronaut` on `PATH`. Reads `pyronaut --version` to learn which GraalPy that CLI expects.
+3. **Pyronaut CLI.** Downloads the Pyronaut wheel from a
+   [GitHub release](https://github.com/micronaut-projects/pyronaut/releases) — Pyronaut is not on
+   PyPI — installs it into a dedicated CPython virtual environment and puts `pyronaut` on `PATH`.
+   Reads `pyronaut --version` to learn which GraalPy that CLI expects.
 4. **GraalPy, pytest and the project's Python dependencies.** Installs GraalPy through `pyenv`
    and builds the project's `.venv` from it, with `pytest` and the project's own dependencies
    inside. `pyronaut test` runs pytest on the embedded GraalPy runtime, and a CPython environment
@@ -236,7 +238,8 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `pyronaut-version` | `latest` | Version to install from PyPI. `latest`, an exact version such as `0.0.3`, or a PEP 440 specifier such as `>=0.0.3,<0.1`. Ignored when `pyronaut-wheel` is set. |
+| `pyronaut-version` | `latest` | Version to install. `latest` is the newest release of `pyronaut-repository`, prereleases included; an exact version such as `0.0.4` is the release tagged `v0.0.4`. Ignored when `pyronaut-wheel` is set. |
+| `pyronaut-repository` | `micronaut-projects/pyronaut` | Repository whose releases carry the `pyronaut-<version>-*.whl` asset. Read with `github-token`. |
 | `pyronaut-wheel` | | Path, glob or URL of a wheel to install instead. A glob must match exactly one file. |
 | `cli-venv-dir` | `$RUNNER_TEMP/pyronaut-cli-venv` | Where the CPython environment holding the CLI goes. |
 
@@ -311,10 +314,10 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 **Platforms.** Linux and macOS, on x64 and aarch64. Pyronaut does not support Windows, and the
 action fails in its first step there rather than partway through a download.
 
-**`github-token` and private releases.** Pyronaut downloads its native launcher bundles from
-GitHub releases of `micronaut-projects/pyronaut`. The default `${{ github.token }}` is scoped to
-the repository running the workflow, so while that repository is private you need a token with
-`contents: read` on it:
+**`github-token` and private releases.** The action downloads the Pyronaut wheel, and Pyronaut
+downloads its native launcher bundles, from GitHub releases of `micronaut-projects/pyronaut`.
+The default `${{ github.token }}` is scoped to the repository running the workflow, so while that
+repository is private you need a token with `contents: read` on it:
 
 ```yaml
 with:
@@ -385,6 +388,9 @@ README that the integration workflow drives end to end, and `demo-project` is th
 action contracts on — the `--version` report and an idempotent `setup` — so CI can exercise the
 whole action, including the real GraalVM and GraalPy installs and the caching, without read access
 to a private repository.
+
+`tests/fixtures/fake-github-api` serves a directory tree as the GitHub REST API, so the unit suite
+can check how the CLI wheel is picked from and downloaded off a release without network access.
 
 ## License
 

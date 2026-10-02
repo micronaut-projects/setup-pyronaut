@@ -73,13 +73,21 @@ if [ -n "${INPUT_PYRONAUT_WHEEL:-}" ]; then
   esac
   printf 'Installing Pyronaut from wheel: %s\n' "$requirement"
 else
+  # Pyronaut is not on PyPI; its wheel is attached to each GitHub release, so
+  # fetch it from there with the same token `pyronaut setup` uses.
   version="$(printf '%s' "${INPUT_PYRONAUT_VERSION:-latest}" | tr -d '[:space:]')"
   case "$version" in
-    '' | latest) requirement="pyronaut" ;;
-    '='* | '>'* | '<'* | '!'* | '~'*) requirement="pyronaut$version" ;;
-    *) requirement="pyronaut==$version" ;;
+    '='* | '>'* | '<'* | '!'* | '~'*)
+      fail "pyronaut-version must be \`latest\` or an exact version such as 0.0.4, not a specifier: $version"
+      ;;
   esac
-  printf 'Installing Pyronaut from PyPI: %s\n' "$requirement"
+  repository="${INPUT_PYRONAUT_REPOSITORY:-micronaut-projects/pyronaut}"
+  wheel_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/pyronaut-wheel"
+  rm -rf "$wheel_dir"
+  requirement="$("$python" "$(dirname "$0")/release-wheel.py" \
+    --repository "$repository" --version "${version:-latest}" --dest "$wheel_dir")" ||
+    fail "Could not download the Pyronaut wheel from releases of $repository"
+  printf 'Installing Pyronaut from GitHub release wheel: %s\n' "$requirement"
 fi
 
 group "Creating CLI environment at $CLI_VENV_DIR"

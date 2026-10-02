@@ -224,6 +224,57 @@ run_preflight() {
     "$SCRIPTS/preflight.sh" 2>&1
 }
 
+# Serve a fake GitHub API from $WORK/api with releases of o/r: v0.0.5 is a
+# draft, v0.0.4 has no wheel, v0.0.3 is a prerelease with one, and v0.0.2 is
+# a full release. Sets GITHUB_API_URL; stop_fake_api must follow.
+start_fake_api() {
+  local api="$WORK/api" base port=""
+  mkdir -p "$api/repos/o/r/releases/assets" "$api/repos/o/r/releases/tags/v0.0.3" "$api/repos/o/r/releases/tags/v0.0.2"
+  printf '{}' >"$api/repos/o/r/index.json"
+  printf 'wheel 0.0.3' >"$api/repos/o/r/releases/assets/3"
+  printf 'wheel 0.0.2' >"$api/repos/o/r/releases/assets/2"
+  "$ROOT/tests/fixtures/fake-github-api/server.py" "$api" &
+  FAKE_API_PID=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    [ -s "$api/port" ] && port="$(cat "$api/port")" && break
+    sleep 0.2
+  done
+  [ -n "$port" ] || fail_now "the fake GitHub API did not start"
+  base="http://127.0.0.1:$port"
+  export GITHUB_API_URL="$base"
+  release_json() {
+    local tag="$1" draft="$2" pre="$3" assets="$4"
+    printf '{"tag_name":"%s","draft":%s,"prerelease":%s,"assets":[%s]}' "$tag" "$draft" "$pre" "$assets"
+  }
+  wheel_json() {
+    printf '{"name":"pyronaut-%s-py3-none-any.whl","size":11,"url":"%s/repos/o/r/releases/assets/%s"}' "$1" "$base" "$2"
+  }
+  local tarball='{"name":"pyronaut-run-linux-amd64-0.0.4.tar.gz","size":1,"url":"x"}'
+  release_json v0.0.3 false true "$(wheel_json 0.0.3 3)" >"$api/repos/o/r/releases/tags/v0.0.3/index.json"
+  release_json v0.0.2 false false "$(wheel_json 0.0.2 2)" >"$api/repos/o/r/releases/tags/v0.0.2/index.json"
+  printf '[%s,%s,%s,%s]' \
+    "$(release_json v0.0.5 true true "$(wheel_json 0.0.5 5)")" \
+    "$(release_json v0.0.4 false true "$tarball")" \
+    "$(cat "$api/repos/o/r/releases/tags/v0.0.3/index.json")" \
+    "$(cat "$api/repos/o/r/releases/tags/v0.0.2/index.json")" \
+    >"$api/repos/o/r/releases/index.json"
+}
+
+stop_fake_api() {
+  kill "$FAKE_API_PID" 2>/dev/null
+  wait "$FAKE_API_PID" 2>/dev/null
+  unset GITHUB_API_URL
+}
+
+fail_now() {
+  failed=$((failed + 1))
+  printf '  FAIL %s\n' "$*"
+}
+
+run_release_wheel() {
+  python3 "$SCRIPTS/release-wheel.py" --dest "$WORK/wheel" "$@" 2>&1
+}
+
 # -- preflight ---------------------------------------------------------------
 
 preflight_defaults() {
@@ -922,6 +973,56 @@ cli_rejects_an_ambiguous_wheel() {
   check_contains "says how many matched" "$out" "matched 2 files"
 }
 
+cli_rejects_a_version_specifier() {
+  local out status
+  out="$(INPUT_PYRONAUT_VERSION='>=0.0.3' CLI_VENV_DIR="$WORK/cli" "$SCRIPTS/install-cli.sh" 2>&1)"
+  status=$?
+  check "fails" "$status" "1"
+  check_contains "says specifiers are not supported" "$out" "not a specifier"
+  check "creates no environment" "$([ -e "$WORK/cli" ] && echo present || echo absent)" "absent"
+}
+
+wheel_latest_takes_the_newest_release_with_a_wheel() {
+  start_fake_api
+  local out
+  out="$(GH_TOKEN=secret run_release_wheel --repository o/r --version latest)"
+  check "prints the downloaded wheel" "$(printf '%s\n' "$out" | tail -1)" "$WORK/wheel/pyronaut-0.0.3-py3-none-any.whl"
+  check "skips the draft and the release without a wheel" "$(cat "$WORK/wheel/pyronaut-0.0.3-py3-none-any.whl")" "wheel 0.0.3"
+  check_contains "sends the token to the API" "$(cat "$WORK/api/requests.log")" "repos/o/r/releases/assets/3 Bearer secret"
+  stop_fake_api
+}
+
+wheel_exact_version_uses_the_v_tag() {
+  start_fake_api
+  local out
+  out="$(run_release_wheel --repository o/r --version 0.0.2)"
+  check "downloads the tagged release" "$(cat "$WORK/wheel/pyronaut-0.0.2-py3-none-any.whl")" "wheel 0.0.2"
+  check_contains "reads the v-prefixed tag" "$(cat "$WORK/api/requests.log")" "repos/o/r/releases/tags/v0.0.2 -"
+  out="$(run_release_wheel --repository o/r --version v0.0.3)"
+  check "accepts a v-prefixed version" "$(printf '%s\n' "$out" | tail -1)" "$WORK/wheel/pyronaut-0.0.3-py3-none-any.whl"
+  stop_fake_api
+}
+
+wheel_reports_a_missing_version() {
+  start_fake_api
+  local out status
+  out="$(run_release_wheel --repository o/r --version 0.0.9)"
+  status=$?
+  check "fails" "$status" "1"
+  check_contains "names the missing tag" "$out" "has no release tagged v0.0.9"
+  stop_fake_api
+}
+
+wheel_reports_an_unreadable_repository() {
+  start_fake_api
+  local out status
+  out="$(run_release_wheel --repository o/private --version 0.0.3)"
+  status=$?
+  check "fails" "$status" "1"
+  check_contains "points at github-token" "$out" "the \`github-token\` input needs a token"
+  stop_fake_api
+}
+
 cli_ignores_an_interpreter_inside_the_target_venv() {
   # What a second use of the action in one job looks like: the first run left
   # its CLI venv on PATH, so `python3.12` resolves inside the directory this
@@ -1048,7 +1149,13 @@ test_case "sdk-cache-key: tracks the project" sdk_cache_key_tracks_the_project
 
 test_case "install-cli: rejects an unmatched wheel" cli_rejects_an_unmatched_wheel
 test_case "install-cli: rejects an ambiguous wheel" cli_rejects_an_ambiguous_wheel
+test_case "install-cli: rejects a version specifier" cli_rejects_a_version_specifier
 test_case "install-cli: ignores an interpreter inside the target venv" cli_ignores_an_interpreter_inside_the_target_venv
+
+test_case "release-wheel: latest takes the newest release with a wheel" wheel_latest_takes_the_newest_release_with_a_wheel
+test_case "release-wheel: an exact version uses the v tag" wheel_exact_version_uses_the_v_tag
+test_case "release-wheel: reports a missing version" wheel_reports_a_missing_version
+test_case "release-wheel: reports an unreadable repository" wheel_reports_an_unreadable_repository
 
 test_case "summary: reports the cache state" summary_reports_cache_state
 test_case "summary: handles a skipped GraalPy" summary_handles_a_skipped_graalpy
