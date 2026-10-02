@@ -16,7 +16,7 @@ inputs:
       of `pyronaut-repository` tagged `v<version>`. Use `latest` for the newest release, including
       prereleases, or an exact version such as `0.0.4`. Ignored when `pyronaut-wheel` is set.
     required: false
-    default: '0.0.9'
+    default: '0.0.10'
   pyronaut-repository:
     description: >-
       GitHub repository whose releases carry the Pyronaut wheel. pip reads the release page
