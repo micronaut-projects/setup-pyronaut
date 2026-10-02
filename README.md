@@ -141,7 +141,7 @@ jobs:
         with:
           pyronaut-version: '0.0.3'
           java-version: '25'
-          graalvm-version: '25.3'
+          graalvm-version: '25.4'
           pytest-version: '9.0.3'
 
       - run: pyronaut install
@@ -185,7 +185,7 @@ The glob has to match exactly one file. A `https://` or `file://` URL works too.
   with:
     distribution: graalvm
     java-version: '25'
-    version: '25.3'
+    version: '25.4'
     components: native-image
 
 - uses: micronaut-projects/setup-pyronaut@v1
@@ -249,7 +249,7 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 | --- | --- | --- |
 | `graalvm` | `true` | Set up a GraalVM via `graalvm/setup-graalvm`. Set to `false` when the workflow already provides one. |
 | `java-version` | `25` | Java version. Pyronaut requires 25 or later. |
-| `graalvm-version` | `25.3` | GraalVM release, for example `25.3`, `latest` or `dev`. |
+| `graalvm-version` | `25.4` | GraalVM release, for example `25.3`, `latest` or `dev`. |
 | `graalvm-distribution` | `graalvm` | `graalvm` for Oracle GraalVM, `graalvm-community` for the community build. |
 
 ### GraalPy
