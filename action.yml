@@ -12,14 +12,15 @@ inputs:
   # -- Pyronaut CLI ----------------------------------------------------------
   pyronaut-version:
     description: >-
-      Version of the Pyronaut CLI to install. The wheel is downloaded from the GitHub release of
-      `pyronaut-repository` tagged `v<version>`. Use `latest` for the newest release, including
+      Version of the Pyronaut CLI to install. pip installs the wheel attached to the GitHub release
+      of `pyronaut-repository` tagged `v<version>`. Use `latest` for the newest release, including
       prereleases, or an exact version such as `0.0.4`. Ignored when `pyronaut-wheel` is set.
     required: false
     default: '0.0.9'
   pyronaut-repository:
     description: >-
-      GitHub repository whose releases carry the Pyronaut wheel. Read with `github-token`.
+      GitHub repository whose releases carry the Pyronaut wheel. pip reads the release page
+      anonymously, so its releases must be public.
     required: false
     default: 'micronaut-projects/pyronaut'
   pyronaut-wheel:
@@ -154,9 +155,8 @@ inputs:
     default: ''
   github-token:
     description: >-
-      Token used to download the Pyronaut wheel and native launcher bundles from GitHub releases,
-      and to raise API rate limits. The default job token only reaches public releases; set a PAT with `contents: read`
-      on `micronaut-projects/pyronaut` while that repository is private.
+      Token used to download native launcher bundles from GitHub releases, and to raise API rate
+      limits when resolving `latest`.
     required: false
     default: ${{ github.token }}
 

@@ -42,9 +42,10 @@ The action runs these steps, in order:
    and then verifies that `JAVA_HOME` really is a GraalVM 25 or later. Pyronaut's own toolchain
    discovery takes `JAVA_HOME` first when it satisfies the requested toolchain, so this is what
    stops `pyronaut setup` from downloading a second GraalVM of its own.
-3. **Pyronaut CLI.** Downloads the Pyronaut wheel from a
+3. **Pyronaut CLI.** Installs the Pyronaut wheel attached to a
    [GitHub release](https://github.com/micronaut-projects/pyronaut/releases) — Pyronaut is not on
-   PyPI — installs it into a dedicated CPython virtual environment and puts `pyronaut` on `PATH`.
+   PyPI — into a dedicated CPython virtual environment and puts `pyronaut` on `PATH`. pip reads
+   the release's asset list with `--find-links`, so no index or token is involved.
    Reads `pyronaut --version` to learn which GraalPy that CLI expects.
 4. **GraalPy, pytest and the project's Python dependencies.** Installs GraalPy through `pyenv`
    and builds the project's `.venv` from it, with `pytest` and the project's own dependencies
@@ -239,7 +240,7 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 | Input | Default | Description |
 | --- | --- | --- |
 | `pyronaut-version` | `0.0.9` | Version to install. `latest` is the newest release of `pyronaut-repository`, prereleases included; an exact version such as `0.0.4` is the release tagged `v0.0.4`. Ignored when `pyronaut-wheel` is set. |
-| `pyronaut-repository` | `micronaut-projects/pyronaut` | Repository whose releases carry the `pyronaut-<version>-*.whl` asset. Read with `github-token`. |
+| `pyronaut-repository` | `micronaut-projects/pyronaut` | Repository whose releases carry the `pyronaut-<version>-*.whl` asset. Its releases must be public. |
 | `pyronaut-wheel` | | Path, glob or URL of a wheel to install instead. A glob must match exactly one file. |
 | `cli-venv-dir` | `$RUNNER_TEMP/pyronaut-cli-venv` | Where the CPython environment holding the CLI goes. |
 
@@ -314,17 +315,18 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 **Platforms.** Linux and macOS, on x64 and aarch64. Pyronaut does not support Windows, and the
 action fails in its first step there rather than partway through a download.
 
-**`github-token` and private releases.** The action downloads the Pyronaut wheel, and Pyronaut
-downloads its native launcher bundles, from GitHub releases of `micronaut-projects/pyronaut`.
-The default `${{ github.token }}` is scoped to the repository running the workflow, so while that
-repository is private you need a token with `contents: read` on it:
+**Installing from GitHub releases.** Pyronaut is not on PyPI. The action has pip install the
+wheel straight from the release, the same command the release notes give:
 
-```yaml
-with:
-  github-token: ${{ secrets.PYRONAUT_RELEASE_TOKEN }}
+```bash
+pip install --upgrade --no-index \
+  --find-links https://github.com/micronaut-projects/pyronaut/releases/expanded_assets/v<version> \
+  'pyronaut==<version>'
 ```
 
-Once the releases are public the default token is enough, and only serves to raise API rate limits.
+`--find-links` accepts any HTML page with distribution links on it, and `--no-index` keeps pip off
+PyPI. `github-token` is only used to resolve `latest` and by `pyronaut setup`, and the default
+`${{ github.token }}` is enough for both.
 
 **The project `.venv` is recreated.** The action owns `<project-dir>/.venv`. If your repository
 checks in or pre-creates that directory, point `venv-dir` somewhere else.
@@ -388,9 +390,6 @@ README that the integration workflow drives end to end, and `demo-project` is th
 action contracts on — the `--version` report and an idempotent `setup` — so CI can exercise the
 whole action, including the real GraalVM and GraalPy installs and the caching, without read access
 to a private repository.
-
-`tests/fixtures/fake-github-api` serves a directory tree as the GitHub REST API, so the unit suite
-can check how the CLI wheel is picked from and downloaded off a release without network access.
 
 ## License
 
