@@ -10,6 +10,7 @@ Usage: server.py DIRECTORY
 """
 
 import http.server
+import socketserver
 import sys
 from pathlib import Path
 
@@ -37,6 +38,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+class Server(http.server.HTTPServer):
+    def server_bind(self):
+        # HTTPServer.server_bind resolves the bound address with
+        # socket.getfqdn, which on macOS runners can stall on a reverse DNS
+        # lookup for longer than the tests wait for the port file. Nothing here
+        # needs the name, so bind without it.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
+server = Server(("127.0.0.1", 0), Handler)
 (ROOT / "port").write_text(str(server.server_address[1]), encoding="utf-8")
 server.serve_forever()
