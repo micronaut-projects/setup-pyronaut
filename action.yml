@@ -16,7 +16,7 @@ inputs:
       `pyronaut-repository` tagged `v<version>`. Use `latest` for the newest release, including
       prereleases, or an exact version such as `0.0.4`. Ignored when `pyronaut-wheel` is set.
     required: false
-    default: 'latest'
+    default: '0.0.9'
   pyronaut-repository:
     description: >-
       GitHub repository whose releases carry the Pyronaut wheel. Read with `github-token`.
