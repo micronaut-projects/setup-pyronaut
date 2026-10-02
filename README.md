@@ -238,7 +238,7 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `pyronaut-version` | `latest` | Version to install. `latest` is the newest release of `pyronaut-repository`, prereleases included; an exact version such as `0.0.4` is the release tagged `v0.0.4`. Ignored when `pyronaut-wheel` is set. |
+| `pyronaut-version` | `0.0.9` | Version to install. `latest` is the newest release of `pyronaut-repository`, prereleases included; an exact version such as `0.0.4` is the release tagged `v0.0.4`. Ignored when `pyronaut-wheel` is set. |
 | `pyronaut-repository` | `micronaut-projects/pyronaut` | Repository whose releases carry the `pyronaut-<version>-*.whl` asset. Read with `github-token`. |
 | `pyronaut-wheel` | | Path, glob or URL of a wheel to install instead. A glob must match exactly one file. |
 | `cli-venv-dir` | `$RUNNER_TEMP/pyronaut-cli-venv` | Where the CPython environment holding the CLI goes. |
