@@ -224,7 +224,6 @@ run_preflight() {
     "$SCRIPTS/preflight.sh" 2>&1
 }
 
-
 # -- preflight ---------------------------------------------------------------
 
 preflight_defaults() {

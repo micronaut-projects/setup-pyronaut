@@ -16,7 +16,7 @@ inputs:
       of `pyronaut-repository` tagged `v<version>`. Use `latest` for the newest release, including
       prereleases, or an exact version such as `0.0.4`. Ignored when `pyronaut-wheel` is set.
     required: false
-    default: 'latest'
+    default: '0.0.9'
   pyronaut-repository:
     description: >-
       GitHub repository whose releases carry the Pyronaut wheel. pip reads the release page
@@ -49,10 +49,12 @@ inputs:
     default: '25'
   graalvm-version:
     description: >-
-      GraalVM release passed to `graalvm/setup-graalvm` (for example `25.3`, `latest`, or `dev`).
-      Leave empty to let that action pick the default for the distribution.
+      GraalVM release passed to `graalvm/setup-graalvm` (for example `25.4`, `latest`, or `dev`).
+      Leave empty to let that action pick the default for the distribution. The default tracks
+      the GraalVM that the GraalPy bundled with the current Pyronaut CLI was built against:
+      the two have to match, and a mismatch does not announce itself as a version error.
     required: false
-    default: '25.3'
+    default: '25.4'
   graalvm-distribution:
     description: 'GraalVM distribution passed to `graalvm/setup-graalvm` (`graalvm` or `graalvm-community`).'
     required: false
