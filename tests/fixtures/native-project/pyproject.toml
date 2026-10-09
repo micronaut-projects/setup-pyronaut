@@ -1,0 +1,12 @@
+# Project fixture for the CI `Action (native toolchain)` job: a project that
+# selects the native toolchain, so `native-launchers: auto` provisions and
+# caches the launchers.
+[project]
+name = "native-demo"
+version = "0.1.0"
+
+[tool.pyronaut.toolchain]
+type = "native"
+
+[tool.pyronaut.dependencies]
+runtime = ["io.micronaut:micronaut-http-server-netty"]

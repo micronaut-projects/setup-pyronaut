@@ -90,6 +90,15 @@ jobs:
           cp -R tests/fixtures/demo-project "${{ runner.temp }}/demo"
           find "${{ runner.temp }}/demo" -type f | sort
 
+      # Stands in for a launcher an earlier job step downloaded on first use.
+      # The demo project uses the JVM toolchain, so the SDK cache must leave
+      # ~/.pyronaut/bin out; the second run below checks that it did.
+      - name: Plant a launcher the SDK cache must not pick up
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.pyronaut/bin"
+          touch "$HOME/.pyronaut/bin/decoy"
+
       - name: Set up Pyronaut
         id: setup
         uses: ./
@@ -112,6 +121,8 @@ jobs:
           PYTHON: ${{ steps.setup.outputs.python }}
           PYRONAUT: ${{ steps.setup.outputs.pyronaut }}
           CACHE_HIT: ${{ steps.setup.outputs.cache-hit }}
+          NATIVE_LAUNCHERS: ${{ steps.setup.outputs.native-launchers }}
+          NATIVE_LAUNCHERS_CACHE_HIT: ${{ steps.setup.outputs.native-launchers-cache-hit }}
         run: |
           set -euo pipefail
           test "$PYRONAUT_VERSION" = "0.0.0.dev0"
@@ -125,6 +136,10 @@ jobs:
           test "$REQUIREMENTS_FILES" = "${{ runner.temp }}/demo/requirements.txt"
           test "$VENV_DIR" = "${{ runner.temp }}/demo/.venv"
           test "$CACHE_HIT" = "false"
+          # A JVM-toolchain project: setup leaves the launchers to first use.
+          test "$NATIVE_LAUNCHERS" = "false"
+          test "$NATIVE_LAUNCHERS_CACHE_HIT" = "false"
+          test ! -e "$HOME/.pyronaut/bin/0.0.0.dev0"
           test -x "$PYRONAUT"
           test -x "$PYTHON"
           test -x "$JAVA_HOME_OUT/bin/java"
@@ -151,6 +166,11 @@ jobs:
           # The runner's own python is untouched, because activate-venv is off.
           python3 -c 'import sys; assert sys.implementation.name == "cpython", sys.version'
 
+      # Start from nothing, so the second run proves what the cache holds
+      # rather than what the first run left on disk.
+      - name: Remove the Pyronaut home
+        run: rm -rf "$HOME/.pyronaut"
+
       - name: Set up Pyronaut again
         id: again
         uses: ./
@@ -168,6 +188,70 @@ jobs:
           set -euo pipefail
           test "$CACHE_HIT" = "true"
           test "$GRAALPY_CACHE_HIT" = "true"
+          ls "$HOME/.pyronaut/setup/0.0.0.dev0/"*/setup.json
+          # The SDK cache excluded ~/.pyronaut/bin.
+          test ! -e "$HOME/.pyronaut/bin/decoy"
+
+  action-native:
+    name: Action with the native toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the stub Pyronaut CLI
+        run: |
+          set -euo pipefail
+          python3 -m venv "${{ runner.temp }}/build-venv"
+          "${{ runner.temp }}/build-venv/bin/python" -m pip install --quiet --upgrade build
+          "${{ runner.temp }}/build-venv/bin/python" -m build --wheel \
+            --outdir "${{ runner.temp }}/stub-dist" tests/fixtures/stub-cli
+
+      - name: Create a project fixture
+        run: cp -R tests/fixtures/native-project "${{ runner.temp }}/native"
+
+      - name: Set up Pyronaut
+        id: setup
+        uses: ./
+        with:
+          pyronaut-wheel: ${{ runner.temp }}/stub-dist/pyronaut-*.whl
+          project-dir: ${{ runner.temp }}/native
+          graalpy: 'false'
+          cache-maven: 'false'
+          cache-key-suffix: action-native-${{ github.run_id }}
+
+      - name: Check that setup provisioned the launchers
+        env:
+          NATIVE_LAUNCHERS: ${{ steps.setup.outputs.native-launchers }}
+          NATIVE_LAUNCHERS_CACHE_HIT: ${{ steps.setup.outputs.native-launchers-cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$NATIVE_LAUNCHERS" = "true"
+          test "$NATIVE_LAUNCHERS_CACHE_HIT" = "false"
+          ls "$HOME/.pyronaut/bin/0.0.0.dev0/"*/pyronaut-dev
+
+      - name: Remove the Pyronaut home
+        run: rm -rf "$HOME/.pyronaut"
+
+      - name: Set up Pyronaut again
+        id: again
+        uses: ./
+        with:
+          pyronaut-wheel: ${{ runner.temp }}/stub-dist/pyronaut-*.whl
+          project-dir: ${{ runner.temp }}/native
+          graalpy: 'false'
+          cache-maven: 'false'
+          cache-key-suffix: action-native-${{ github.run_id }}
+
+      - name: Check that both caches were restored
+        env:
+          CACHE_HIT: ${{ steps.again.outputs.cache-hit }}
+          NATIVE_LAUNCHERS_CACHE_HIT: ${{ steps.again.outputs.native-launchers-cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = "true"
+          test "$NATIVE_LAUNCHERS_CACHE_HIT" = "true"
+          ls "$HOME/.pyronaut/bin/0.0.0.dev0/"*/pyronaut-dev
 
   action-minimal:
     name: Action without GraalPy
