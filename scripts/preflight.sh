@@ -79,7 +79,7 @@ case "$arch" in
   x86_64 | amd64) arch="x64" ;;
 esac
 
-cache_key_base="$(sanitize_key "${INPUT_CACHE_KEY_PREFIX:-setup-pyronaut-v1}")-$(sanitize_key "${RUNNER_OS:-unknown}")-$(sanitize_key "$arch")"
+cache_key_base="$(sanitize_key "${INPUT_CACHE_KEY_PREFIX:-setup-pyronaut-v2}")-$(sanitize_key "${RUNNER_OS:-unknown}")-$(sanitize_key "$arch")"
 if [ -n "${INPUT_CACHE_KEY_SUFFIX:-}" ]; then
   cache_key_base="$cache_key_base-$(sanitize_key "$INPUT_CACHE_KEY_SUFFIX")"
 fi

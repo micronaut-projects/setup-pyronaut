@@ -11,6 +11,9 @@ What this stub does reproduce is everything the action actually contracts on:
   install,
 * a `setup` command that writes the manifest below `~/.pyronaut` and honours
   `--local-repository`, `--progress` and the other flags the action passes,
+* `--native-launchers`, which the action detects in `setup --help` and which
+  lays down placeholder launchers under `~/.pyronaut/bin/<version>/<platform>`,
+  where the real CLI keeps them,
 * a `doctor` command that exits non-zero when the environment is incomplete.
 """
 
@@ -33,6 +36,11 @@ GRAALPY_INTERPRETER = "graalpy3.13-25.4.4"
 NATIVE_IMAGE_JDK = "25"
 
 USAGE = "Usage: pyronaut [--version] <setup|doctor> [args...]\n"
+SETUP_USAGE = (
+    "Usage: pyronaut setup [--local-repository <dir>] [--offline] [--refresh] "
+    "[--native-launchers] [--progress <auto|on|off>]\n"
+)
+NATIVE_LAUNCHERS = ("pyronaut-dev", "pyronaut-run", "pyronaut-run-python")
 
 
 def _platform() -> str:
@@ -61,7 +69,21 @@ def _option(argv: list[str], name: str) -> str | None:
     return None
 
 
+def _download_native_launchers() -> None:
+    launcher_dir = Path.home() / ".pyronaut" / "bin" / PYRONAUT_VERSION / _platform()
+    launcher_dir.mkdir(parents=True, exist_ok=True)
+    for name in NATIVE_LAUNCHERS:
+        launcher = launcher_dir / name
+        if not launcher.is_file():
+            launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            launcher.chmod(0o755)
+    print(f"Native launchers are ready in {launcher_dir}")
+
+
 def _setup(argv: list[str]) -> int:
+    if "-h" in argv or "--help" in argv:
+        sys.stdout.write(SETUP_USAGE)
+        return 0
     java_home = os.environ.get("JAVA_HOME")
     if not java_home or not (Path(java_home) / "bin" / "java").exists():
         print("Unable to locate or provision a compatible GraalVM JDK (requires JDK 25+)", file=sys.stderr)
@@ -70,6 +92,9 @@ def _setup(argv: list[str]) -> int:
     local_repository = _option(argv, "--local-repository") or str(Path.home() / ".m2" / "repository")
     manifest = Path.home() / ".pyronaut" / "setup" / PYRONAUT_VERSION / _platform() / "setup.json"
     manifest.parent.mkdir(parents=True, exist_ok=True)
+
+    if "--native-launchers" in argv:
+        _download_native_launchers()
 
     if manifest.is_file() and "--refresh" not in argv:
         print(f"Pyronaut setup is ready at {manifest}")

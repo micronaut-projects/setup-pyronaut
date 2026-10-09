@@ -5,14 +5,14 @@ needs in CI, and caches all of it.
 
 Getting a Pyronaut project building on a fresh runner means four separate things have to line up:
 a GraalVM JDK 25 or later, the Pyronaut CLI, a GraalPy environment with `pytest` in it, and a
-completed `pyronaut setup` — which downloads native launchers and resolves the SDK classpath.
-Done by hand that is a few hundred megabytes of downloads on every single job. This action does
+completed `pyronaut setup` — which provisions the SDK toolchain and resolves its classpath, and
+for projects on the native toolchain downloads the native launchers too. Done by hand that is a few hundred megabytes of downloads on every single job. This action does
 it in one step and keeps the result in the GitHub Actions cache.
 
 ```yaml
 - uses: actions/checkout@v5
 
-- uses: micronaut-projects/setup-pyronaut@v1
+- uses: micronaut-projects/setup-pyronaut@v2
 
 - run: pyronaut install
 - run: pyronaut test
@@ -25,11 +25,13 @@ GraalVM, creates `.venv` from GraalPy with `pytest` in it, and runs `pyronaut se
 
 - [What it does](#what-it-does)
 - [Python dependencies](#python-dependencies)
+- [Native launchers](#native-launchers)
 - [Caching](#caching)
 - [Usage](#usage)
 - [Inputs](#inputs)
 - [Outputs](#outputs)
 - [Notes](#notes)
+- [Migrating from v1](#migrating-from-v1)
 - [Development](#development)
 
 ## What it does
@@ -53,8 +55,9 @@ The action runs these steps, in order:
    cannot supply packages to it, so this environment has to be created by GraalPy itself — see
    [Python dependencies](#python-dependencies).
 5. **Settings.** Writes `~/.pyronaut/settings.toml` when any of the settings inputs are given.
-6. **`pyronaut setup`.** Provisions the SDK toolchain, downloads the native launchers and resolves
-   the SDK classpaths into the Maven repository.
+6. **`pyronaut setup`.** Provisions the SDK toolchain and resolves the SDK classpaths into the
+   Maven repository. When the project uses the native launchers, it downloads those too — see
+   [Native launchers](#native-launchers).
 
 Steps 2 and 4 can be turned off individually when a workflow already provides them.
 
@@ -78,7 +81,7 @@ So the action does exactly that. Alongside `pytest` it installs:
 Both are on by default and both are detected, not configured:
 
 ```yaml
-- uses: micronaut-projects/setup-pyronaut@v1
+- uses: micronaut-projects/setup-pyronaut@v2
   # Nothing to declare: a project with [project].dependencies or a
   # requirements.txt gets them installed into the GraalPy environment.
 ```
@@ -86,7 +89,7 @@ Both are on by default and both are detected, not configured:
 Override either when the detection is not what you want:
 
 ```yaml
-- uses: micronaut-projects/setup-pyronaut@v1
+- uses: micronaut-projects/setup-pyronaut@v2
   with:
     install-project: 'false'      # never `pip install -e .`
     requirements: |               # these files instead of requirements.txt
@@ -100,13 +103,49 @@ key, so changing a dependency rebuilds the environment instead of restoring a st
 A project that declares no Python dependencies is left alone — no editable install is attempted,
 so a project without a working build backend is never forced through one.
 
+## Native launchers
+
+Pyronaut's native toolchain runs on three native launchers, `pyronaut-dev`, `pyronaut-run` and
+`pyronaut-run-python`. Together they are about 1.6 GB on Linux x64. Since
+[micronaut-projects/pyronaut#360](https://github.com/micronaut-projects/pyronaut/pull/360),
+`pyronaut setup` no longer downloads them by default. A command that needs one downloads it on
+first use, and `pyronaut setup --native-launchers` downloads all three up front.
+
+A CI job should download them during setup, where the action can cache them, and only when the
+project needs them. The `native-launchers` input decides this. Its default, `auto`, reads the
+project the same way Pyronaut does:
+
+| Project | Toolchain | Launchers |
+| --- | --- | --- |
+| No `pyproject.toml` in `project-dir` | `pyronaut dev` and `pyronaut test` run the sources on the native `pyronaut-dev`, unless given `--jvm` | downloaded and cached |
+| `pyproject.toml` with `[tool.pyronaut.toolchain] type = "native"` | native | downloaded and cached |
+| `pyproject.toml` with no toolchain type, or `type = "jvm"` | JVM | neither downloaded nor cached |
+
+Set `native-launchers` to `true` or `false` to override the detection. `--native-launchers` in
+`setup-args` counts as `true`.
+
+```yaml
+- uses: micronaut-projects/setup-pyronaut@v2
+  with:
+    # A project without pyproject.toml whose steps all pass --jvm never
+    # touches the launchers, so skip them.
+    native-launchers: 'false'
+```
+
+**Minimum Pyronaut version.** `auto` and `false` need a Pyronaut release that includes
+[#360](https://github.com/micronaut-projects/pyronaut/pull/360), the first release after `0.1.0`.
+The action checks whether the installed CLI lists `--native-launchers` in `pyronaut setup --help`.
+Older CLIs download the launchers during every `pyronaut setup` and reject the flag, so for them the
+action does what v1 did: it never passes the flag, and it always caches the launchers.
+
 ## Caching
 
-Three caches, each keyed on what actually invalidates it:
+Four caches, each keyed on what actually invalidates it:
 
 | Cache | Contents | Key |
 | --- | --- | --- |
-| SDK | `~/.pyronaut` — the setup manifest, provisioned JDKs, native launchers and resolved tool runtime | OS, architecture, Pyronaut version, the exact GraalVM in use, and the contents of `settings.toml` |
+| SDK | `~/.pyronaut` without `bin` — the setup manifest, provisioned JDKs and resolved tool runtime | OS, architecture, Pyronaut version, the exact GraalVM in use, and the contents of `settings.toml` |
+| Native launchers | `~/.pyronaut/bin`, only when the job [needs the launchers](#native-launchers) | OS, architecture, Pyronaut version, and the contents of `settings.toml` |
 | GraalPy | `~/.pyenv` and the project environment | OS, architecture, the pyenv GraalPy identifier, and every requirement installed into the environment — including the contents of `pyproject.toml` and any requirement files, so changing a dependency rebuilds it |
 | Maven | `~/.m2/repository` | OS, architecture, Pyronaut version, and a hash of the project's `pyproject.toml` |
 
@@ -120,6 +159,10 @@ A few details worth knowing:
   its manifest against the current GraalVM, repositories and launcher configuration on every run
   and re-provisions whatever no longer matches. That is why the SDK cache has restore-key
   fallbacks: a near-miss still saves most of the downloads.
+- **The native launchers have a cache entry of their own.** The SDK cache always leaves
+  `~/.pyronaut/bin` out, so a JVM-only job never saves or restores 1.6 GB of launchers it does not
+  use, and a JVM job and a native job share one SDK entry instead of overwriting each other's.
+  Launchers that a later step downloads on first use are not cached.
 - **A restored GraalPy environment is verified before it is trusted.** The action records what it
   installed in a marker file and rebuilds the environment if the marker, the interpreter, or the
   environment itself does not check out.
@@ -138,7 +181,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: micronaut-projects/setup-pyronaut@v1
+      - uses: micronaut-projects/setup-pyronaut@v2
         with:
           pyronaut-version: '0.0.3'
           java-version: '25'
@@ -160,7 +203,7 @@ strategy:
 runs-on: ${{ matrix.os }}
 steps:
   - uses: actions/checkout@v5
-  - uses: micronaut-projects/setup-pyronaut@v1
+  - uses: micronaut-projects/setup-pyronaut@v2
   - run: pyronaut test
 ```
 
@@ -171,7 +214,7 @@ Caches are keyed per operating system and architecture, so the matrix legs never
 ```yaml
 - run: ./gradlew :micronaut-pyronaut:buildSdkWheel
 
-- uses: micronaut-projects/setup-pyronaut@v1
+- uses: micronaut-projects/setup-pyronaut@v2
   with:
     pyronaut-wheel: pyronaut/build/wheel/dist/pyronaut-*.whl
     project-dir: examples/hello-world
@@ -189,7 +232,7 @@ The glob has to match exactly one file. A `https://` or `file://` URL works too.
     version: '25.4'
     components: native-image
 
-- uses: micronaut-projects/setup-pyronaut@v1
+- uses: micronaut-projects/setup-pyronaut@v2
   with:
     graalvm: 'false'
 ```
@@ -199,7 +242,7 @@ The action still verifies `JAVA_HOME` and fails with a clear message if it is no
 ### A job that only builds, and never runs pytest
 
 ```yaml
-- uses: micronaut-projects/setup-pyronaut@v1
+- uses: micronaut-projects/setup-pyronaut@v2
   with:
     graalpy: 'false'
 ```
@@ -209,29 +252,32 @@ This skips the GraalPy install entirely, which is the slowest part of a cold run
 ### Pointing at a private native-launcher bundle
 
 ```yaml
-- uses: micronaut-projects/setup-pyronaut@v1
+- uses: micronaut-projects/setup-pyronaut@v2
   with:
     github-token: ${{ secrets.PYRONAUT_RELEASE_TOKEN }}
     native-images-base-url: https://github.com/micronaut-projects/pyronaut/releases
     native-images-version: '0.0.3'
+    native-launchers: 'true'
     maven-repositories: |
       mavenCentral
       https://central.sonatype.com/repository/maven-snapshots/
 ```
 
 These are written to `~/.pyronaut/settings.toml` before setup runs, and they take part in the SDK
-cache key.
+and launcher cache keys. The `native-images-*` settings only matter when the launchers are
+downloaded, which is why this example sets `native-launchers: 'true'`.
 
 ### Diagnosing a failure
 
 ```yaml
-- uses: micronaut-projects/setup-pyronaut@v1
+- uses: micronaut-projects/setup-pyronaut@v2
   with:
     run-doctor: 'true'
 ```
 
 `pyronaut doctor` checks Python, the setup state, GraalVM, GraalPy, the native launchers and the
 project, and prints a fix for every failing check. It is reported as a warning, not a failure.
+Launchers that are not downloaded yet pass the check, so a JVM-only job reports no problem there.
 
 ## Inputs
 
@@ -274,21 +320,22 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 | `project-dir` | `.` | Project root, used to find `pyproject.toml` and to place the GraalPy environment. |
 | `run-setup` | `true` | Run `pyronaut setup`. |
 | `setup-args` | | Extra arguments for `pyronaut setup`, one argument per line — see [Notes](#notes). |
+| `native-launchers` | `auto` | Download the native launchers during setup, and cache them. `auto` does so when the project needs them, `true` always, `false` never. `--native-launchers` in `setup-args` counts as `true`. See [Native launchers](#native-launchers). |
 | `run-doctor` | `false` | Run `pyronaut doctor` afterwards and print its report. |
 | `local-repository` | `~/.m2/repository` | Maven local repository. |
 | `maven-repositories` | | Repositories for `[maven].repositories` in `settings.toml`, one per line. |
 | `native-images-base-url` | | `[native-images].base-url` in `settings.toml`. |
 | `native-images-version` | | `[native-images].version` in `settings.toml`. |
 | `native-images-release-tag` | | `[native-images].release-tag` in `settings.toml`. |
-| `github-token` | `${{ github.token }}` | Token for downloading native launchers and for API rate limits. See [Notes](#notes). |
+| `github-token` | `${{ github.token }}` | Token `pyronaut setup` uses to download native launchers, and for API rate limits. See [Notes](#notes). |
 
 ### Caching
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `cache` | `true` | Cache `~/.pyronaut` and the GraalPy installation. |
+| `cache` | `true` | Cache `~/.pyronaut`, the native launchers when the job needs them, and the GraalPy installation. |
 | `cache-maven` | `true` | Cache the Maven local repository. |
-| `cache-key-prefix` | `setup-pyronaut-v1` | Prefix for every cache key. Bump it to invalidate all caches. |
+| `cache-key-prefix` | `setup-pyronaut-v2` | Prefix for every cache key. Bump it to invalidate all caches. |
 | `cache-key-suffix` | | Extra key component, to keep unrelated jobs from sharing caches. |
 
 ## Outputs
@@ -307,7 +354,9 @@ project, and prints a fix for every failing check. It is reported as a warning, 
 | `install-project` | Whether the project was installed with `pip install -e .`. |
 | `requirements-files` | Requirement files installed into the GraalPy environment, one path per line. |
 | `local-repository` | The Maven local repository Pyronaut uses. |
-| `cache-hit` | `true` when `~/.pyronaut` was restored from an exact key match. |
+| `cache-hit` | `true` when `~/.pyronaut`, without the native launchers, was restored from an exact key match. |
+| `native-launchers` | `true` when `pyronaut setup` provisioned the native launchers and the action cached them; `false` when a command that needs one downloads it on first use. |
+| `native-launchers-cache-hit` | `true` when `~/.pyronaut/bin` was restored from an exact key match. |
 | `graalpy-cache-hit` | `true` when the GraalPy cache was restored from an exact key match. |
 
 ## Notes
@@ -326,7 +375,8 @@ pip install --upgrade --no-index \
 
 `--find-links` accepts any HTML page with distribution links on it, and `--no-index` keeps pip off
 PyPI. `github-token` is only used to resolve `latest` and by `pyronaut setup`, and the default
-`${{ github.token }}` is enough for both.
+`${{ github.token }}` is enough for both. A launcher that a later step downloads on first use is
+fetched without it, which works because Pyronaut's releases are public.
 
 **The project `.venv` is recreated.** The action owns `<project-dir>/.venv`. If your repository
 checks in or pre-creates that directory, point `venv-dir` somewhere else.
@@ -359,6 +409,25 @@ setup-args: |
 Writing `--progress on` on a single line would reach the CLI as one token. The action warns when it
 sees that, and suggests `--option=value` as the shorter alternative.
 
+## Migrating from v1
+
+v2 follows [micronaut-projects/pyronaut#360](https://github.com/micronaut-projects/pyronaut/pull/360),
+which stopped `pyronaut setup` from downloading the native launchers.
+
+- **Change `@v1` to `@v2`.** Nothing else is required.
+- **JVM-toolchain projects no longer download or cache the launchers.** This saves about 1.6 GB of
+  downloads and cache storage per OS and architecture. A command that does select a native
+  launcher still works: it downloads the launcher on first use, but the action does not cache it.
+- **Native-toolchain projects, and projects without a `pyproject.toml`, keep v1's behaviour.**
+  Setup downloads the launchers and the action caches them, now in a cache entry of their own.
+- **If `auto` guesses wrong**, set `native-launchers: 'true'` or `'false'`. This can happen, for
+  example, when a job selects the toolchain with `--native` or `--jvm` on the command line.
+- **The caches start cold once.** The default `cache-key-prefix` is now `setup-pyronaut-v2`, and
+  the SDK cache no longer holds `~/.pyronaut/bin`, so v1's entries are not restored.
+- **New outputs:** `native-launchers` and `native-launchers-cache-hit`.
+- **Older Pyronaut releases still work.** With a CLI from before #360, the action behaves as v1
+  did. See [Native launchers](#native-launchers).
+
 ## Development
 
 ```bash
@@ -383,8 +452,9 @@ default to each new Pyronaut release. The Pyronaut release workflow triggers it 
 
 Test fixtures are real files under `tests/fixtures`, not heredocs inside the workflows, so they can
 be read and edited like ordinary source: `hello-world` is the minimal application from the Pyronaut
-README that the integration workflow drives end to end, and `demo-project` is the project the CI
-`Action` jobs set up against.
+README that the integration workflow drives end to end, and `demo-project` is the JVM-toolchain project
+the CI `Action` jobs set up against, and `native-project` selects the native toolchain so CI can
+check that the launchers are provisioned and cached.
 
 `tests/fixtures/stub-cli` is a stand-in for the real Pyronaut CLI. It reproduces the parts this
 action contracts on — the `--version` report and an idempotent `setup` — so CI can exercise the

@@ -127,6 +127,18 @@ inputs:
     description: 'Extra arguments appended to `pyronaut setup`, one per line.'
     required: false
     default: ''
+  native-launchers:
+    description: >-
+      Download Pyronaut's native launchers (`pyronaut-dev`, `pyronaut-run` and
+      `pyronaut-run-python`, about 1.6 GB on Linux x64) during setup, and cache them. `auto`
+      does so when the project uses them: when `project-dir` has no `pyproject.toml`, so
+      `pyronaut dev` and `pyronaut test` run its sources on the native `pyronaut-dev`, or when
+      `pyproject.toml` sets `[tool.pyronaut.toolchain] type = "native"`. `true` always, `false`
+      never; a command that needs a launcher then downloads it on first use. `--native-launchers`
+      in `setup-args` counts as `true`. Needs a Pyronaut release with `pyronaut setup
+      --native-launchers`; older ones always download the launchers during setup.
+    required: false
+    default: 'auto'
   run-doctor:
     description: 'Run `pyronaut doctor` after setup and print its report.'
     required: false
@@ -155,8 +167,8 @@ inputs:
     default: ''
   github-token:
     description: >-
-      Token used to download native launcher bundles from GitHub releases, and to raise API rate
-      limits when resolving `latest`.
+      Token used by `pyronaut setup` to download native launcher bundles from GitHub releases,
+      and to raise API rate limits when resolving `latest`.
     required: false
     default: ${{ github.token }}
 
@@ -172,7 +184,7 @@ inputs:
   cache-key-prefix:
     description: 'Prefix for every cache key this action writes. Bump it to invalidate all caches at once.'
     required: false
-    default: 'setup-pyronaut-v1'
+    default: 'setup-pyronaut-v2'
   cache-key-suffix:
     description: 'Extra component appended to every cache key, to keep unrelated jobs from sharing caches.'
     required: false
@@ -216,8 +228,18 @@ outputs:
     description: 'Maven local repository used by Pyronaut.'
     value: ${{ steps.preflight.outputs.local-repository }}
   cache-hit:
-    description: 'Whether the Pyronaut SDK cache (`~/.pyronaut`) was restored from an exact key match.'
+    description: >-
+      Whether the Pyronaut SDK cache (`~/.pyronaut`, without the native launchers) was restored
+      from an exact key match.
     value: ${{ steps.sdk-cache-restore.outputs.cache-hit == 'true' }}
+  native-launchers:
+    description: >-
+      Whether `pyronaut setup` provisioned the native launchers in this job, and the action cached
+      them. `false` means a command that needs one downloads it on first use.
+    value: ${{ steps.native-launchers.outputs.native-launchers }}
+  native-launchers-cache-hit:
+    description: 'Whether the native launcher cache (`~/.pyronaut/bin`) was restored from an exact key match.'
+    value: ${{ steps.launchers-cache-restore.outputs.cache-hit == 'true' }}
   graalpy-cache-hit:
     description: 'Whether the GraalPy cache was restored from an exact key match.'
     value: ${{ steps.graalpy-cache-restore.outputs.cache-hit == 'true' }}
@@ -270,6 +292,16 @@ runs:
         CLI_VENV_DIR: ${{ steps.preflight.outputs.cli-venv-dir }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: '"${{ github.action_path }}/scripts/install-cli.sh"'
+
+    - name: Resolve native launchers
+      id: native-launchers
+      shell: bash
+      env:
+        PYRONAUT: ${{ steps.cli.outputs.pyronaut }}
+        PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
+        INPUT_NATIVE_LAUNCHERS: ${{ inputs.native-launchers }}
+        INPUT_SETUP_ARGS: ${{ inputs.setup-args }}
+      run: '"${{ github.action_path }}/scripts/resolve-native-launchers.sh"'
 
     - name: Resolve GraalPy version
       id: graalpy-resolve
@@ -354,9 +386,23 @@ runs:
       if: steps.preflight.outputs.cache == 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ steps.preflight.outputs.pyronaut-home }}
+        # Everything under the Pyronaut home except the native launchers, which
+        # have a cache entry of their own: a JVM-only job neither saves nor
+        # restores them. Listing the children rather than the directory is what
+        # lets actions/cache apply the exclusion.
+        path: |
+          ${{ steps.preflight.outputs.pyronaut-home }}/*
+          !${{ steps.preflight.outputs.pyronaut-home }}/bin
         key: ${{ steps.sdk-cache-key.outputs.cache-key }}
         restore-keys: ${{ steps.sdk-cache-key.outputs.restore-keys }}
+
+    - name: Restore native launcher cache
+      id: launchers-cache-restore
+      if: steps.preflight.outputs.cache == 'true' && steps.native-launchers.outputs.cache == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.preflight.outputs.pyronaut-home }}/bin
+        key: ${{ steps.sdk-cache-key.outputs.launchers-cache-key }}
 
     - name: Cache the Maven local repository
       if: steps.preflight.outputs.cache-maven == 'true'
@@ -381,6 +427,8 @@ runs:
         INPUT_LOCAL_REPOSITORY: ${{ inputs.local-repository }}
         LOCAL_REPOSITORY: ${{ steps.preflight.outputs.local-repository }}
         PROJECT_DIR: ${{ steps.preflight.outputs.project-dir }}
+        NATIVE_LAUNCHERS: ${{ steps.native-launchers.outputs.native-launchers }}
+        NATIVE_LAUNCHERS_FLAG: ${{ steps.native-launchers.outputs.setup-flag }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: '"${{ github.action_path }}/scripts/run-setup.sh"'
 
@@ -390,8 +438,24 @@ runs:
         && steps.sdk-cache-restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ steps.preflight.outputs.pyronaut-home }}
+        # Everything under the Pyronaut home except the native launchers, which
+        # have a cache entry of their own: a JVM-only job neither saves nor
+        # restores them. Listing the children rather than the directory is what
+        # lets actions/cache apply the exclusion.
+        path: |
+          ${{ steps.preflight.outputs.pyronaut-home }}/*
+          !${{ steps.preflight.outputs.pyronaut-home }}/bin
         key: ${{ steps.sdk-cache-key.outputs.cache-key }}
+
+    - name: Save native launcher cache
+      if: >-
+        steps.preflight.outputs.cache == 'true' && steps.preflight.outputs.run-setup == 'true'
+        && steps.native-launchers.outputs.cache == 'true'
+        && steps.launchers-cache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.preflight.outputs.pyronaut-home }}/bin
+        key: ${{ steps.sdk-cache-key.outputs.launchers-cache-key }}
 
     - name: Run pyronaut doctor
       if: steps.preflight.outputs.run-doctor == 'true'
@@ -413,6 +477,8 @@ runs:
         VENV_DIR: ${{ steps.graalpy-resolve.outputs.venv-dir }}
         PYRONAUT_HOME: ${{ steps.preflight.outputs.pyronaut-home }}
         LOCAL_REPOSITORY: ${{ steps.preflight.outputs.local-repository }}
+        NATIVE_LAUNCHERS: ${{ steps.native-launchers.outputs.native-launchers }}
         SDK_CACHE_HIT: ${{ steps.sdk-cache-restore.outputs.cache-hit }}
+        LAUNCHERS_CACHE_HIT: ${{ steps.launchers-cache-restore.outputs.cache-hit }}
         GRAALPY_CACHE_HIT: ${{ steps.graalpy-cache-restore.outputs.cache-hit }}
       run: '"${{ github.action_path }}/scripts/summary.sh"'

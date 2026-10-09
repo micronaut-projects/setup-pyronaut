@@ -205,6 +205,8 @@ run_setup() {
     INPUT_LOCAL_REPOSITORY="${INPUT_LOCAL_REPOSITORY:-}" \
     LOCAL_REPOSITORY="${LOCAL_REPOSITORY:-$HOME/.m2/repository}" \
     PROJECT_DIR="${PROJECT_DIR:-$WORK}" \
+    NATIVE_LAUNCHERS="${NATIVE_LAUNCHERS:-false}" \
+    NATIVE_LAUNCHERS_FLAG="${NATIVE_LAUNCHERS_FLAG:-false}" \
     "$SCRIPTS/run-setup.sh" 2>&1
 }
 
@@ -212,7 +214,7 @@ run_preflight() {
   INPUT_PROJECT_DIR="${INPUT_PROJECT_DIR:-.}" \
     INPUT_LOCAL_REPOSITORY="${INPUT_LOCAL_REPOSITORY:-}" \
     INPUT_CLI_VENV_DIR="${INPUT_CLI_VENV_DIR:-}" \
-    INPUT_CACHE_KEY_PREFIX="${INPUT_CACHE_KEY_PREFIX:-setup-pyronaut-v1}" \
+    INPUT_CACHE_KEY_PREFIX="${INPUT_CACHE_KEY_PREFIX:-setup-pyronaut-v2}" \
     INPUT_CACHE_KEY_SUFFIX="${INPUT_CACHE_KEY_SUFFIX:-}" \
     INPUT_GRAALVM="${INPUT_GRAALVM:-true}" \
     INPUT_GRAALPY="${INPUT_GRAALPY:-true}" \
@@ -236,7 +238,7 @@ preflight_defaults() {
   check "maven repository defaults to ~/.m2" "$(output local-repository)" "$HOME/.m2/repository"
   check "cli venv goes to RUNNER_TEMP" "$(output cli-venv-dir)" "$RUNNER_TEMP/pyronaut-cli-venv"
   check "creates the pyronaut home" "$([ -d "$HOME/.pyronaut" ] && echo yes)" "yes"
-  check_contains "cache key names the OS" "$(output cache-key-base)" "setup-pyronaut-v1-Linux-"
+  check_contains "cache key names the OS" "$(output cache-key-base)" "setup-pyronaut-v2-Linux-"
   check_contains "logs the runner" "$out" "Runner:"
 }
 
@@ -564,11 +566,170 @@ setup_warns_about_a_packed_argument() {
 setup_reports_a_failure() {
   stub_pyronaut 3
   local out status
-  out="$(run_setup)"
+  out="$(NATIVE_LAUNCHERS=true run_setup)"
   status=$?
   check "propagates the failure" "$status" "1"
   check_contains "points at the doctor" "$out" "run-doctor: true"
   check_contains "points at the token" "$out" "github-token"
+
+  out="$(NATIVE_LAUNCHERS=false run_setup)"
+  check "skips the token hint when no launchers were downloaded" \
+    "$(printf '%s' "$out" | grep -c 'github-token')" "0"
+}
+
+setup_asks_for_native_launchers() {
+  stub_pyronaut 0
+  NATIVE_LAUNCHERS=true NATIVE_LAUNCHERS_FLAG=true run_setup >/dev/null
+  check "passes the flag" "$(cat "$WORK/setup-args")" "setup --native-launchers --progress off"
+  NATIVE_LAUNCHERS=true NATIVE_LAUNCHERS_FLAG=false run_setup >/dev/null
+  check "leaves it out when told to" "$(cat "$WORK/setup-args")" "setup --progress off"
+}
+
+# -- resolve-native-launchers ------------------------------------------------
+
+# A `pyronaut` whose `setup --help` lists --native-launchers, as the CLI does
+# from micronaut-projects/pyronaut#360 on, or not, as every earlier one does.
+stub_pyronaut_help() {
+  local supports="$1"
+  mkdir -p "$WORK/bin"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'printf "%%s\\n" "$*" >>"%s/pyronaut-calls"\n' "$WORK"
+    if [ "$supports" = true ]; then
+      printf 'printf "Usage: pyronaut setup [--offline] [--refresh] [--native-launchers] [--progress <auto|on|off>]\\n"\n'
+    else
+      printf 'printf "Usage: pyronaut setup [--offline] [--refresh] [--progress <auto|on|off>]\\n"\n'
+    fi
+  } >"$WORK/bin/pyronaut"
+  chmod +x "$WORK/bin/pyronaut"
+}
+
+run_native_launchers() {
+  PYRONAUT="$WORK/bin/pyronaut" \
+    PROJECT_DIR="${PROJECT_DIR:-$WORK/project}" \
+    INPUT_NATIVE_LAUNCHERS="${INPUT_NATIVE_LAUNCHERS:-auto}" \
+    INPUT_SETUP_ARGS="${INPUT_SETUP_ARGS:-}" \
+    "$SCRIPTS/resolve-native-launchers.sh" 2>&1
+}
+
+# Resolve against a project whose pyproject.toml is the given text, and print
+# whether the launchers were judged necessary.
+native_launchers_for() {
+  : >"$GITHUB_OUTPUT"
+  printf '%s\n' "$1" >"$WORK/project/pyproject.toml"
+  run_native_launchers >/dev/null
+  output native-launchers
+}
+
+native_auto_without_a_pyproject() {
+  mkdir -p "$WORK/project"
+  stub_pyronaut_help true
+  local out
+  out="$(run_native_launchers)"
+  check "exits 0" "$?" "0"
+  check "needs the launchers" "$(output native-launchers)" "true"
+  check "asks setup for them" "$(output setup-flag)" "true"
+  check "caches them" "$(output cache)" "true"
+  check "detects the flag" "$(output supported)" "true"
+  check_contains "says why" "$out" "no pyproject.toml"
+  check "only asks for setup's usage" "$(cat "$WORK/pyronaut-calls")" "setup --help"
+}
+
+native_auto_with_a_jvm_project() {
+  mkdir -p "$WORK/project"
+  stub_pyronaut_help true
+  printf '[project]\nname = "demo"\n\n[tool.pyronaut.dependencies]\nruntime = []\n' >"$WORK/project/pyproject.toml"
+  local out
+  out="$(run_native_launchers)"
+  check "does not need the launchers" "$(output native-launchers)" "false"
+  check "does not ask setup for them" "$(output setup-flag)" "false"
+  check "does not cache them" "$(output cache)" "false"
+  check_contains "says why" "$out" "not set, so the JVM toolchain"
+
+  check "an explicit jvm type is the JVM toolchain" \
+    "$(native_launchers_for '[tool.pyronaut.toolchain]
+type = "jvm"')" "false"
+}
+
+native_auto_reads_the_toolchain_type() {
+  mkdir -p "$WORK/project"
+  stub_pyronaut_help true
+  check "a [tool.pyronaut.toolchain] table" "$(native_launchers_for '[project]
+name = "demo"
+
+[tool.pyronaut.toolchain]
+type = "native"  # the native-image toolchain')" "true"
+  check "single quotes and any case" "$(native_launchers_for "[tool.pyronaut.toolchain]
+type = 'Native'")" "true"
+  check "a dotted key" "$(native_launchers_for '[tool.pyronaut]
+toolchain.type = "native"')" "true"
+  check "an inline table" "$(native_launchers_for '[tool.pyronaut]
+toolchain = { distribution = "graalvm", type = "native" }')" "true"
+  check "a fully dotted key under [tool]" "$(native_launchers_for '[tool]
+pyronaut.toolchain.type = "native"')" "true"
+  check "the type of another tool's toolchain" "$(native_launchers_for '[tool.other.toolchain]
+type = "native"')" "false"
+  check "a type outside the toolchain table" "$(native_launchers_for '[tool.pyronaut.toolchain]
+distribution = "graalvm"
+
+[tool.pyronaut.native]
+type = "native"')" "false"
+}
+
+native_input_overrides_detection() {
+  mkdir -p "$WORK/project"
+  stub_pyronaut_help true
+  printf '[project]\nname = "demo"\n' >"$WORK/project/pyproject.toml"
+  INPUT_NATIVE_LAUNCHERS=TRUE run_native_launchers >/dev/null
+  check "true forces them for a JVM project" "$(output setup-flag)" "true"
+
+  rm "$WORK/project/pyproject.toml"
+  : >"$GITHUB_OUTPUT"
+  INPUT_NATIVE_LAUNCHERS=off run_native_launchers >/dev/null
+  check "false skips them for a direct-source project" "$(output native-launchers)" "false"
+  check "and leaves them out of the cache" "$(output cache)" "false"
+}
+
+native_setup_args_flag_wins() {
+  mkdir -p "$WORK/project"
+  printf '[project]\nname = "demo"\n' >"$WORK/project/pyproject.toml"
+  stub_pyronaut_help true
+  local out
+  out="$(INPUT_NATIVE_LAUNCHERS=false INPUT_SETUP_ARGS='
+    --refresh
+    --native-launchers
+  ' run_native_launchers)"
+  check "counts as true" "$(output native-launchers)" "true"
+  check "caches them" "$(output cache)" "true"
+  check "does not pass the flag a second time" "$(output setup-flag)" "false"
+  check_contains "says why" "$out" "--native-launchers in setup-args"
+}
+
+native_rejects_a_bad_value() {
+  mkdir -p "$WORK/project"
+  stub_pyronaut_help true
+  local out status
+  out="$(INPUT_NATIVE_LAUNCHERS=maybe run_native_launchers)"
+  status=$?
+  check "fails" "$status" "1"
+  check_contains "names the input" "$out" "Input 'native-launchers' must be auto, true or false"
+}
+
+native_keeps_v1_behaviour_on_an_older_sdk() {
+  mkdir -p "$WORK/project"
+  printf '[project]\nname = "demo"\n' >"$WORK/project/pyproject.toml"
+  stub_pyronaut_help false
+  run_native_launchers >/dev/null
+  check "detects the missing flag" "$(output supported)" "false"
+  check "never passes it" "$(output setup-flag)" "false"
+  check "reports that setup downloads them anyway" "$(output native-launchers)" "true"
+  check "caches them, as v1 did" "$(output cache)" "true"
+
+  : >"$GITHUB_OUTPUT"
+  local out
+  out="$(INPUT_NATIVE_LAUNCHERS=false run_native_launchers)"
+  check "still never passes it" "$(output setup-flag)" "false"
+  check_contains "explains that false needs a newer CLI" "$out" "::notice::This Pyronaut CLI always downloads"
 }
 
 # -- the GraalPy interpreter the CLI names -----------------------------------
@@ -899,6 +1060,23 @@ sdk_cache_key_tracks_the_project() {
     "base-Linux-x64-sdk-0.0.3-Oracle-GraalVM-25.0.1-abcdef-settings-none"
 }
 
+sdk_cache_key_for_launchers() {
+  mkdir -p "$WORK/project"
+  run_sdk_cache_key >/dev/null
+  check "keys the launchers on version and settings" "$(output launchers-cache-key)" \
+    "base-Linux-x64-launchers-0.0.3-settings-none"
+
+  : >"$GITHUB_OUTPUT"
+  GRAALVM_ID=GraalVM-CE-25.0.2-123456 run_sdk_cache_key >/dev/null
+  check "shares them across GraalVMs" "$(output launchers-cache-key)" \
+    "base-Linux-x64-launchers-0.0.3-settings-none"
+
+  : >"$GITHUB_OUTPUT"
+  SETTINGS_HASH=abc123 run_sdk_cache_key >/dev/null
+  check "tracks the native-images settings" "$(output launchers-cache-key)" \
+    "base-Linux-x64-launchers-0.0.3-settings-abc123"
+}
+
 # -- install-cli -------------------------------------------------------------
 
 cli_rejects_an_unmatched_wheel() {
@@ -1001,6 +1179,20 @@ summary_reports_cache_state() {
   check_contains "reports a cache miss" "$summary" '| GraalPy cache | `miss` |'
 }
 
+summary_reports_native_launchers() {
+  PYRONAUT_VERSION=0.0.3 NATIVE_LAUNCHERS=true SDK_CACHE_HIT=true LAUNCHERS_CACHE_HIT=false \
+    "$SCRIPTS/summary.sh" >/dev/null 2>&1
+  check_contains "says setup downloaded them" "$(cat "$GITHUB_STEP_SUMMARY")" \
+    '| Native launchers | `downloaded during setup` |'
+  check_contains "reports the launcher cache" "$(cat "$GITHUB_STEP_SUMMARY")" '| Launcher cache | `miss` |'
+
+  : >"$GITHUB_STEP_SUMMARY"
+  PYRONAUT_VERSION=0.0.3 NATIVE_LAUNCHERS=false SDK_CACHE_HIT=true "$SCRIPTS/summary.sh" >/dev/null 2>&1
+  check_contains "says they come on first use" "$(cat "$GITHUB_STEP_SUMMARY")" \
+    '| Native launchers | `on first use` |'
+  check "omits the launcher cache row" "$(grep -c 'Launcher cache' "$GITHUB_STEP_SUMMARY")" "0"
+}
+
 summary_handles_a_skipped_graalpy() {
   PYRONAUT_VERSION=0.0.3 GRAALPY_PYENV_VERSION='' GRAALPY_CACHE_HIT='' VENV_DIR=/w/.venv \
     "$SCRIPTS/summary.sh" >/dev/null 2>&1
@@ -1048,6 +1240,15 @@ test_case "run-setup: appends extra arguments" setup_appends_extra_arguments
 test_case "run-setup: lets the workflow keep progress" setup_lets_the_workflow_keep_progress
 test_case "run-setup: warns about a packed argument" setup_warns_about_a_packed_argument
 test_case "run-setup: reports a failure" setup_reports_a_failure
+test_case "run-setup: asks for native launchers" setup_asks_for_native_launchers
+
+test_case "native-launchers: auto without a pyproject.toml" native_auto_without_a_pyproject
+test_case "native-launchers: auto with a JVM project" native_auto_with_a_jvm_project
+test_case "native-launchers: auto reads the toolchain type" native_auto_reads_the_toolchain_type
+test_case "native-launchers: the input overrides detection" native_input_overrides_detection
+test_case "native-launchers: the setup-args flag wins" native_setup_args_flag_wins
+test_case "native-launchers: rejects a bad value" native_rejects_a_bad_value
+test_case "native-launchers: keeps v1 behaviour on an older SDK" native_keeps_v1_behaviour_on_an_older_sdk
 
 test_case "interpreter: the CLI's identifier is preferred" interpreter_from_the_cli_is_preferred
 test_case "interpreter: falls back to deriving" interpreter_falls_back_to_deriving
@@ -1079,6 +1280,7 @@ test_case "write-settings: drops a stale cached file" settings_drop_a_stale_cach
 
 test_case "sdk-cache-key: shape" sdk_cache_key_shape
 test_case "sdk-cache-key: tracks the project" sdk_cache_key_tracks_the_project
+test_case "sdk-cache-key: keys the launchers" sdk_cache_key_for_launchers
 
 test_case "install-cli: rejects an unmatched wheel" cli_rejects_an_unmatched_wheel
 test_case "install-cli: rejects an ambiguous wheel" cli_rejects_an_ambiguous_wheel
@@ -1089,6 +1291,7 @@ test_case "install-cli: latest fails without releases" cli_latest_fails_without_
 
 test_case "summary: reports the cache state" summary_reports_cache_state
 test_case "summary: handles a skipped GraalPy" summary_handles_a_skipped_graalpy
+test_case "summary: reports native launchers" summary_reports_native_launchers
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
