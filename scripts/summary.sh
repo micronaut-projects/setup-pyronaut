@@ -34,7 +34,16 @@ row() {
   fi
   row "Pyronaut home" "${PYRONAUT_HOME:-}"
   row "Maven repository" "${LOCAL_REPOSITORY:-}"
+  case "${NATIVE_LAUNCHERS:-}" in
+    true) row "Native launchers" "downloaded during setup" ;;
+    false) row "Native launchers" "on first use" ;;
+  esac
   row "SDK cache" "$(cache_state "${SDK_CACHE_HIT:-}")"
+  # The launchers are only cached when the job provisions them; for a JVM-only
+  # job the row would only ever say `disabled`, which reads as a misconfiguration.
+  if [ "${NATIVE_LAUNCHERS:-}" = true ]; then
+    row "Launcher cache" "$(cache_state "${LAUNCHERS_CACHE_HIT:-}")"
+  fi
   row "GraalPy cache" "$(cache_state "${GRAALPY_CACHE_HIT:-}")"
   printf '\n'
 } >>"${GITHUB_STEP_SUMMARY:-/dev/stdout}"
