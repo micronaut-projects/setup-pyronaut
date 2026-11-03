@@ -285,7 +285,7 @@ Launchers that are not downloaded yet pass the check, so a JVM-only job reports 
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `pyronaut-version` | `0.0.10` | Version to install. `latest` is the newest release of `pyronaut-repository`, prereleases included; an exact version such as `0.0.4` is the release tagged `v0.0.4`. Ignored when `pyronaut-wheel` is set. |
+| `pyronaut-version` | `0.1.0` | Version to install. `latest` is the newest release of `pyronaut-repository`, prereleases included; an exact version such as `0.0.4` is the release tagged `v0.0.4`. Ignored when `pyronaut-wheel` is set. |
 | `pyronaut-repository` | `micronaut-projects/pyronaut` | Repository whose releases carry the `pyronaut-<version>-*.whl` asset. Its releases must be public. |
 | `pyronaut-wheel` | | Path, glob or URL of a wheel to install instead. A glob must match exactly one file. |
 | `cli-venv-dir` | `$RUNNER_TEMP/pyronaut-cli-venv` | Where the CPython environment holding the CLI goes. |
